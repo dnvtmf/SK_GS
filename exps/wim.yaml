@@ -1,0 +1,75 @@
+exp_name: WIM
+__base__: 'default.yaml'
+arch_cfg:
+    loss_cfg:
+        image: {method: l1, lambda: 0.8}
+        ssim: 0.2
+        re_sp_pos: 0.1
+        re_sp_tr: 0
+        sp_arap_t: 0.01
+        sp_arap_ct: 0
+        joint: 1
+        joint_all: 1
+        jp_dist: 0.01
+        sparse: 0.2
+        smooth: 0
+        guided: 0
+        cmp_p: 0
+        cmp_r: 0
+        gj: 0
+        c: 0
+    train_schedule:
+        - [0, 'static']
+        - [1000, 'sp']
+        - [40000, 'skeleton']
+    joint_update_interval: [100, 20_001, 40_000]
+    sp_guided_steps_range: [-1, -1]
+    sp_guided_detach: true
+    sk_tr_batch_size: -1
+    momentum: 0.9
+    canonical_time_id: 0
+    sp_lbs: true
+    sp_merge_threshold: 0.01
+    num_superpoints: 512
+    joint_init_steps: 10000
+    #    test_time_interpolate: true
+    adaptive_control_cfg:
+        opacity_reset_interval: [3000, 3000, 15000]
+        densify_interval: [100, 500, 15000]
+        prune_interval: [100, 500, 15000]
+
+        sp_adjust_interval: [1000, 2000, 19_999]
+        sp_merge_interval: [1000, 20_000, 30_000]
+## dataset
+scene: atlas
+dataset: WIM
+dataset_cfg:
+    batch_mode: true
+    with_rays: false
+    background: 'black' # white
+    coord_src: 'opengl'
+    coord_dst: 'colmap'
+    use_time: True
+    frame_ranges: [0, 50]
+#data_sampler: ti_inc
+#data_sampler_cfg:
+#    stages:
+#        - [3000, 0, 10, 'fix']
+#        - [5000, 0, 50, 'step']
+#        - [5000, 0, 300, 'step']
+## solver
+num_init_points: 10_000
+lr: 0.001
+lr_schedulers:
+    - [exp, 40000, 1.0, 0.01]
+    - [exp, 40000, 1.0, 0.01]
+epochs: 80000
+vis_interval: 1000
+checkpoint_interval: 1000
+
+checkpoint_save:
+    10000: gs_end_pc
+    20000: sp_end_pc
+    30000: guided
+    40000: sk_start_pc
+    40001: sk_init

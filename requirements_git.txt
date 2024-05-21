@@ -1,0 +1,1 @@
+git+https://github.com/graphdeco-inria/diff-gaussian-rasterization

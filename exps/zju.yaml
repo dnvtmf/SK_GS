@@ -1,0 +1,70 @@
+exp_name: ZJU
+__base__: 'default.yaml'
+arch_cfg:
+    loss_cfg:
+        re_sp_pos: 0.1
+        re_sp_tr: 0 # 1.0
+        sp_arap_t: 0.01
+        sp_arap_ct: 0.01
+        joint: 1
+        joint_all: 1
+        jp_dist: 0.01
+        sparse: 0.2
+        smooth: 0
+        guided: 0
+        cmp_p: 1
+        cmp_r: 0.1
+        gj: 0
+        c: 0
+    train_schedule:
+        - [0, 'static']
+        - [1000, 'sp']
+        - [30000, 'skeleton']
+    joint_update_interval: [100, 15_001, 30_000]
+    sp_guided_steps_range: [30_001, 35_000]
+    sp_guided_detach: true
+    sk_tr_batch_size: -1
+    momentum: 0.99
+    canonical_time_id: 0 # [0, 1]
+
+    adaptive_control_cfg:
+        opacity_reset_interval: [3000, 3000, 15000]
+        densify_interval: [100, 600, 15000]
+        prune_interval: [100, 600, 15000] # 100
+
+        sp_adjust_interval: [1000, 2000, 19_999]
+        sp_merge_interval: [1000, 20_000, 30_000]
+## dataset
+scene: "377"
+dataset: ZJU_MoCap_2
+dataset_cfg:
+    batch_mode: true
+    with_rays: false
+    background: 'black' # white
+    coord_src: 'colmap'
+    coord_dst: 'colmap'
+    use_perspective_v2: true
+    # use_time: True
+    # num_max_frames: 300
+    frame_ranges: [-1, -1]
+## solver
+opacity_reset_interval: [3000, 3000, 15000]
+densify_interval: [100, 600, 15000]
+prune_interval: [100, 600, 15000] # 100
+sp_adjust_interval: [1000, 2000, 19_999]
+sp_merge_interval: [500, 20_000, 30_000]
+
+num_init_points: 10_000
+
+
+lr: 0.001
+lr_schedulers:
+    - [exp, 30000, 1.0, 0.01]
+    - [exp, 30000, 1.0, 0.01]
+epochs: 60000
+vis_interval: 1000
+
+checkpoint_save:
+    10000: gs_end_pc
+    20000: sp_end_pc
+    30000: sk_start_pc

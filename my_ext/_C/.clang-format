@@ -1,0 +1,64 @@
+#基于那个配置文件
+BasedOnStyle: Google
+# 跨行括号后参数对齐位置
+AlignAfterOpenBracket: DontAlign # AlwaysBreak
+# 对齐以\连接的多行的\
+# AlignEscapedNewlines: Left
+# 对齐连续赋值的=
+AlignConsecutiveAssignments: true 
+# 连续声明以名称对齐
+AlignConsecutiveDeclarations: false
+# 对齐多行的二元和三元表达式
+AlignOperands: true
+# 对齐行末单行注释的 //
+AlignTrailingComments: true
+#函数参数换行
+AllowAllParametersOfDeclarationOnNextLine: true
+# 短的case缩为一行
+AllowShortCaseLabelsOnASingleLine: true
+# 短的函数缩为一行
+AllowShortFunctionsOnASingleLine: All
+# 短的条件语句缩为一行
+AllowShortIfStatementsOnASingleLine: true
+# 短的循环语句缩为一行
+AllowShortLoopsOnASingleLine: true
+# template<>声明后总是断行
+AlwaysBreakTemplateDeclarations: true
+# false时, 函数参数要么共一行,要么参数一个一行
+BinPackArguments: true
+BinPackParameters: true
+# 在构造函数初始化时按逗号断行，并以冒号对齐
+BreakConstructorInitializersBeforeComma: true
+Cpp11BracedListStyle: true
+# 1行的最大字符数
+ColumnLimit: 120
+IndentWrappedFunctionNames: true
+#缩进宽度
+IndentWidth: 2
+# 连续的空行保留几行
+MaxEmptyLinesToKeep: 1
+KeepEmptyLinesAtTheStartOfBlocks: false
+#在block从空行开始
+NamespaceIndentation: None
+#指针的*的挨着哪边
+PointerAlignment: Right
+SpaceAfterCStyleCast: true
+# SpaceAfterTemplateKeyword: true
+#等号两边的空格
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeParens: ControlStatements
+SpaceInEmptyParentheses: false
+# 行末注释前的空格数
+SpacesBeforeTrailingComments: 2
+SpacesInAngles: false
+SpacesInCStyleCastParentheses: false
+SpacesInContainerLiterals: false
+# 小括号内两边添加空格 ( a )
+SpacesInParentheses: false
+# 中括号内两边空格 [ a ] 
+SpacesInSquareBrackets: false
+Standard: Cpp11
+#tab键盘的宽度
+TabWidth: 2
+UseTab: Never
+
