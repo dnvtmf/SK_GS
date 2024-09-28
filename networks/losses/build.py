@@ -1,9 +1,9 @@
-from typing import Type, Callable, Optional
+from typing import Type, Callable
 
 import numpy as np
 from torch import nn
+
 from my_ext.utils import Registry
-from ..base import NeRF_Network
 
 LOSSES = Registry()  # type: Registry[Type[nn.Module]]
 
@@ -24,7 +24,7 @@ class LossDict(nn.Module):
         >= s3: v3
     """
 
-    def __init__(self, _net: NeRF_Network = None, default=0.0, **kwargs):
+    def __init__(self, _net: nn.Module = None, default=0.0, **kwargs):
         super().__init__()
         self.default = default
         self.loss_functions = {}

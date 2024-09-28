@@ -3,12 +3,11 @@
 
 Reference:
     - https://krasjet.github.io/quaternion/quaternion.pdf
+    - https://zhuanlan.zhihu.com/p/375199378
 """
-from typing import Union
-
+from typing import Union, Any
 import torch
 from torch import Tensor
-
 from my_ext._C import get_C_function, try_use_C_extension
 
 
@@ -63,6 +62,12 @@ def inv(q: Tensor):
 
     q是单位四元数时, 逆为conj(q)"""
     return conj(q) / norm(q)[..., None]
+
+
+def cross(qa: Tensor, qb: Tensor):
+    qc = torch.zeros_like(qa)
+    qc[..., :3] = qa[..., 3:] * qb[..., :3] + qb[..., 3:] * qa[..., :3] + torch.cross(qa[..., :3], qb[..., :3], dim=-1)
+    return qc
 
 
 def from_rotate(u: Tensor, theta: Tensor):
@@ -177,7 +182,7 @@ def test():
     print(mul(q1, inv(q1)))
     R = toR(q1)
     print(R[0], R[0] @ R[0].T)
-    from my_ext.ops_3d.lietorch import SO3
+    from lietorch import SO3
     R_ = SO3.InitFromVec(q1)
     T = R_.matrix()
     print(T.shape, R.shape)

@@ -1,5 +1,4 @@
 """转变点或向量"""
-from typing import Optional, Tuple, Union
 
 import torch
 from torch import Tensor
@@ -9,7 +8,9 @@ from torch.cuda.amp import custom_bwd, custom_fwd
 
 from my_ext._C import get_C_function, try_use_C_extension, get_python_function
 
-__all__ = ['xfm', 'xfm_vectors', 'apply']
+__all__ = ['xfm', 'xfm_vectors', 'apply', 'pixel2points']
+
+from my_ext.ops_3d.coord_trans_opengl import point2pixel
 
 
 class _xfm_func(torch.autograd.Function):
@@ -27,7 +28,8 @@ class _xfm_func(torch.autograd.Function):
     def backward(ctx, dout):
         points, matrix = ctx.saved_variables
         grad_points, grad_matrix = get_C_function('xfm_bwd')(
-            dout, points, matrix, ctx.isPoints, ctx.to_homo, ctx.needs_input_grad[0], ctx.needs_input_grad[1])
+            dout, points, matrix, ctx.isPoints, ctx.to_homo, ctx.needs_input_grad[0], ctx.needs_input_grad[1]
+        )
         return grad_points, grad_matrix, None, None
 
 
@@ -93,39 +95,26 @@ def xfm_vectors(vectors: Tensor, matrix: Tensor, to_homo=True) -> Tensor:
     return _xfm(vectors, matrix, False, to_homo)
 
 
-def point2pixel(
-    points: Tensor, Tw2v: Tensor = None, Tv2s: Tensor = None, Tv2c: Tensor = None, Tw2c: Tensor = None,
-    size: Tuple[int, int] = None
-):
-    """
-    Args:
-        points (Tensor):  containing 3D points with shape [..., 3] or [..., 4]
-        Tw2v (Union[None, Tensor]): world to view space transformation matrix with shape [..., 4, 4]
-        Tv2s (Optional[Tensor]): view to screen space transformation matrix with shape [..., 3, 3]
-        Tv2c (Optional[Tensor]): view to clip space transformation matrix with shape [..., 4, 4]
-        Tw2c (Optional[Tensor]): world to clip space transformation matrix with shape [..., 4, 4]
-        size (Optional[Tuple[int, int]]): (W, H)
-    Returns:
-        (Tensor):  containing 2D pixel with shape [..., 2]
-    """
-    if points.shape[-1] == 3:
-        points = torch.cat([points, torch.ones_like(points[..., :1])], dim=-1)  # to homo
-    if Tw2v is not None and Tv2s is not None:
-        points = points @ Tw2v.transpose(-1, -2)
-        print(points)
-        points = points[..., :3] @ Tv2s.transpose(-1, -2)
-        print(points)
-        pixel = points[..., :2] / points[..., 2:3]
-        return pixel
-    else:
-        if Tw2c is None:
-            assert Tw2v is not None and Tv2c is not None
-            Tw2c = Tv2c @ Tw2v
-        ndc = points @ Tw2c.transpose(-1, -2)
-        pixel = torch.zeros_like(ndc[..., :2])
-        pixel[..., 0] = (1 + ndc[..., 0] / ndc[..., 3]) * 0.5 * size[0]
-        pixel[..., 1] = (1 - ndc[..., 1] / ndc[..., 3]) * 0.5 * size[1]
-        return pixel
+def pixel2points(
+    depth: Tensor, Tv2s: Tensor = None, Ts2v: Tensor = None, Tw2v: Tensor = None, Tv2w: Tensor = None,
+    pixel: Tensor = None
+) -> Tensor:
+    if pixel is None:
+        H, W = depth.shape[-2:]
+        pixel = torch.stack(
+            torch.meshgrid(
+                torch.arange(W, device=depth.device, dtype=depth.dtype),
+                torch.arange(H, device=depth.device, dtype=depth.dtype),
+                indexing='xy'
+            ), dim=-1
+        )  # shape: [H, W, 2]
+    xyz = torch.cat([pixel, torch.ones_like(pixel[..., :1])], dim=-1) * depth[..., None]  # [..., H, W, 3]
+    xyz = apply(xyz, Tv2s.inverse() if Ts2v is None else Ts2v)
+    if Tv2w is not None:
+        xyz = apply(xyz, Tv2w)
+    elif Tw2v is not None:
+        xyz = apply(xyz, Tw2v.inverse())
+    return xyz
 
 
 @pytest.mark.parametrize("C,to_homo", [(3, False), (4, False), (3, True)])
@@ -171,10 +160,14 @@ def test_xfm_points(C, to_homo):
     relative_loss("py2 grad points:", points_ref.grad, points_py2.grad)
     relative_loss("py2 grad mtx:", mtx_ref.grad[:, None], mtx_py2.grad)
 
-    get_run_speed((points_ref, mtx_ref), torch.randn_like(ref_out),
-        py_func=py_func, cuda_func=cuda_func)
-    get_run_speed((points_py2, mtx_py2), torch.randn_like(ref_out),
-        py2_func=py2_func)
+    get_run_speed(
+        (points_ref, mtx_ref), torch.randn_like(ref_out),
+        py_func=py_func, cuda_func=cuda_func
+    )
+    get_run_speed(
+        (points_py2, mtx_py2), torch.randn_like(ref_out),
+        py2_func=py2_func
+    )
 
 
 def test_xfm_vectors():
@@ -215,3 +208,19 @@ def test_xfm_vectors():
     relative_loss("res:", ref_out, cuda_out)
     relative_loss("points:", points_ref.grad, points_cuda.grad)
     relative_loss("points_p:", points_ref_p.grad, points_cuda_p.grad)
+
+
+def test_pixel_points():
+    from kornia.geometry.depth import depth_to_3d_v2
+    H, W = 128, 256
+    focal = 256
+    T = torch.eye(4).cuda()
+    K = torch.tensor([[focal, 0, W / 2], [0, focal, H / 2], [0, 0, 1]]).cuda()
+    depth = torch.rand(H, W).cuda() + 0.1
+    print('depth:', depth.shape)
+    xyz = depth_to_3d_v2(depth, K, normalize_points=False)
+    uv, d = point2pixel(xyz, T, K)
+    # print(uv)
+    print('depth error:', (d - depth).abs().max())
+    xyz2 = pixel2points(depth, K, T)
+    print('pixel2points:', xyz2.shape, xyz.shape, (xyz - xyz2).abs().max())

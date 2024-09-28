@@ -37,7 +37,7 @@ def render_gs_offical(
 
     means3D = points
     means2D = screenspace_points
-    assert extras is None and len(kwargs) == 0, f"Not supported"
+    # assert extras is None and len(kwargs) == 0, f"Not supported"
     if rotations is not None:
         rotations = rotations[..., (3, 0, 1, 2)]  # (x, y, z w) -> (w, x, y, z)
     # Rasterize visible Gaussians to image, obtain their radii (on screen).
@@ -63,6 +63,6 @@ def render_gs_offical(
         "viewspace_points": screenspace_points,
         "visibility_filter": radii > 0,
         "radii": radii,
-        "depth": depth,
+        "depths": depth,
         "alpha": alpha,
     }

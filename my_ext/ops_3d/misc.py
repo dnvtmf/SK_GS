@@ -1,8 +1,8 @@
 import numpy as np
 import torch
 from torch import Tensor
-
 from my_ext._C import get_C_function, try_use_C_extension, get_python_function
+
 from my_ext.utils.utils import extend_list, to_list
 
 __all__ = [

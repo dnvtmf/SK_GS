@@ -13,7 +13,7 @@ dependencies:
     - pyyaml
     - tqdm
     - imageio
-    - pytorch==2.1.0
+    - pytorch==2.3.1
     - pytorch-cuda==12.1
     - torchvision
     - torchaudio
@@ -24,12 +24,12 @@ dependencies:
     - gpustat
     - pytest
     - pykdtree
-    - tensorboard # visdom # 用于可视化
+    - tensorboard
     - trimesh
     - shapely
     - seaborn
     - opencv
     - scikit-image
-#    -   pip:
-#            -r requirements.txt
-#            -r requirements_git.txt
+    -   pip:
+            -r requirements.txt
+            -r requirements_git.txt

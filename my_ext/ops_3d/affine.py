@@ -7,7 +7,6 @@ import torch
 import pytorch3d.transforms
 from torch import Tensor
 import numpy as np
-
 from . import quaternion
 from .coord_trans import rotate_x, rotate_y, rotate_z
 
@@ -155,7 +154,6 @@ def matrix_to_lie_np(matrix: Tensor):
 def test():
     import pytorch3d.transforms
     from scipy.spatial.transform import Rotation
-    from tree_segmentation.extension import utils
     utils.set_printoptions(6)
     print()
     n = 10

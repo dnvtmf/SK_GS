@@ -1,0 +1,5 @@
+exp_name: SK_GS/ablation
+__base__: '../d_nerf.yaml'
+log_suffix: 'sp_split_threshold/1000'
+arch_cfg:
+    sp_split_threshold: 1000.

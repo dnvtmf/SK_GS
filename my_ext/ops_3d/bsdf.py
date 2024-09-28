@@ -7,8 +7,8 @@
 # without an express license agreement from NVIDIA CORPORATION or
 # its affiliates is strictly prohibited.
 import math
-
 import pytest
+import numpy as np
 import torch
 import torch.utils.cpp_extension
 

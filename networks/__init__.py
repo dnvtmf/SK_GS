@@ -1,6 +1,3 @@
-from .base import NERF_NETWORKS, NeRF_Network
-from . import (
-    gaussian_splatting,
-    sp_skeleton,
-)
+from .gaussian_splatting import NETWORKS, GaussianSplatting
+from .sk_gs import SkeletonGaussianSplatting
 from .build import make, options

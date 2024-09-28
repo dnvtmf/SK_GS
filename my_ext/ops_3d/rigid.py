@@ -14,11 +14,12 @@ from typing import Union
 
 import torch
 import torch.nn.functional as F
+
 import numpy as np
 from torch import Tensor
 
 from . import quaternion, rotation
-from .lietorch import SE3, SO3
+from lietorch import SE3, SO3
 
 
 def translate(*xyz: Union[float, Tensor], dtype=None, device=None):
@@ -194,12 +195,14 @@ def Rt_to_euler(Rt: Tensor, order='xyz'):
 
 def Rt_to_quaternion(Rt: Tensor):
     t = Rt[..., :3, 3]
-    w = 0.5 * torch.sqrt(Rt[..., 0, 0] + Rt[..., 1, 1] + Rt[..., 2, 2] + 1)
-    w_ = 1. / (4 * w + 1e-10)  # 避免数值不稳定, 存在不用除法的算法
+    w = 0.5 * torch.sqrt((Rt[..., 0, 0] + Rt[..., 1, 1] + Rt[..., 2, 2] + 1).clamp_min(1e-10))  # 避免数值不稳定
+    w_ = 0.25 / w  # 存在不用除法的算法
     x = (Rt[..., 2, 1] - Rt[..., 1, 2]) * w_
     y = (Rt[..., 0, 2] - Rt[..., 2, 0]) * w_
     z = (Rt[..., 1, 0] - Rt[..., 0, 1]) * w_
-    return torch.cat([t, x[..., None], y[..., None], z[..., None], w[..., None]], dim=-1)
+    q = torch.stack([x, y, z, w], dim=-1)
+    q = quaternion.normalize(q)
+    return torch.cat([t, q], dim=-1)
 
 
 def Rt_to_axis_angle(Rt: Tensor):
@@ -322,6 +325,15 @@ def Rt_to_rotation_6d(matrix: torch.Tensor) -> torch.Tensor:
     return torch.cat([matrix[..., :3, 3], matrix[..., :2, :3].flatten(-2, -1)], dim=-1)
 
 
+def inverse(T: Tensor):
+    R = T[..., :3, :3].transpose(-1, -2)
+    t = T[..., :3, 3]
+    T_inv = T.clone()
+    T_inv[..., :3, :3] = R
+    T_inv[..., :3, 3] = torch.einsum('...ij,...j->...i', R, -t)
+    return T_inv
+
+
 def test():
     import pytorch3d.transforms
     from scipy.spatial.transform import Rotation
@@ -378,3 +390,18 @@ def test():
 
     m5 = rotation_6d_to_Rt(Rt_to_rotation_6d(gtM))
     print(f'rotation_6d_to_Rt:', cmp_m(m5))
+
+
+def test_inverse():
+    from my_ext.utils.test_utils import get_rel_error, get_run_speed
+    from lietorch import SE3
+    print()
+
+    func1 = torch.inverse
+    func2 = inverse
+
+    T = SE3.exp(torch.randn(100)).matrix()
+    inv1 = func1(T)
+    inv2 = func2(T)
+    get_rel_error(inv1, inv2, 'T inverse')
+    get_run_speed(T, None, torch_func=func1, py_func=func2)

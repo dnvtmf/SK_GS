@@ -1,45 +1,105 @@
-exp_name: WIM
-__base__: 'default.yaml'
+exp_name: SK_GS/WIM
+arch: SK_GS
 arch_cfg:
+    sh_degree: 3
+    net_cfg:
+        pos_enc_p: 'freq'
+        pos_enc_p_cfg: {degree: 10}
+        pos_enc_t: 'freq'
+        pos_enc_t_cfg: {degree: 6}
+        width: 256
+        depth: 8
+        skips: [4,]
+    train_schedule:
+        init_fix: 2_000
+        init: 8_000
+        sp_fix: 3_000
+        sp: 27_000
+        sk_init: 10000
+        sk: 40_000
+    num_knn: 3
+    ## superpoints
+    num_superpoints: 512
+    local_frame: true
+    hyper_dim: 8
+    sp_prune_threshold: 0.001
+    sp_split_threshold: 0.0002
+    sp_merge_threshold: 0.005
+    max_d_scale: -1.0
+    is_blender: true
+    init_sampling_step: 7500
+    node_max_num_ratio_during_init: 16
+    LBS_method: weighted_kernel
+    warp_method: LBS # LBS_c, LBS, largest
+    # get skeleton
+    joint_update_interval: [1000, 20_000, 40_000]
+    sk_momentum: 0.9
+    sp_guided_detach: true
+    guided_step_start: 40000
+    joint_init_steps: 10_000
+    ## skeleton
+    sk_knn_num: 5
+    sk_use_features: true
+    sk_feature_dim: 0
+    sk_deform_net_cfg:
+        pos_enc_p: 'freq'
+        pos_enc_p_cfg: {degree: 10}
+        pos_enc_t: 'freq'
+        pos_enc_t_cfg: {degree: 6}
+        width: 256
+        depth: 8
+        skips: [4,]
+    ## other
+    test_time_interpolate: false
+    ## learning rate
+    lr_position_init: 0.16
+    lr_position_final: 1.6e-3
+    lr_position_delay_mult: 0.01
+    lr_position_max_steps: 30_000
+    lr_deform_max_steps: 40_000
+    lr_deform_scale: 1.0
+    adaptive_control_cfg:
+        opacity_reset_interval: [3000, 3000, -1]
+        densify_interval: [100, 500, 25_000]
+        prune_interval: [100, 500, 25_000]
+
+        densify_grad_threshold: 0.0002
+        densify_percent_dense: 0.01
+        prune_opacity_threshold: 0.005
+        prune_max_screen_size: 20
+        prune_percent_dense: 0.1
+
+        sp_adjust_interval: [1000, 10_000, 20_000]
+        sp_merge_interval: [1000, 20_000, 30_000]
     loss_cfg:
+        default: 0.0
         image: {method: l1, lambda: 0.8}
         ssim: 0.2
-        re_sp_pos: 0.1
-        re_sp_tr: 0
-        sp_arap_t: 0.01
-        sp_arap_ct: 0
-        joint: 1
-        joint_all: 1
-        jp_dist: 0.01
+        #        arap: 0
+        #        acc: 0
+        #        elastic: 0
+        joint: 0
+        joint_all: 0
+        cmp_t: 1.0
+        cmp_r: 1.0
+        cmp_s: 1.0
         sparse: 0.2
         smooth: 0
-        guided: 0
-        cmp_p: 0
-        cmp_r: 0
-        gj: 0
-        c: 0
-    train_schedule:
-        - [0, 'static']
-        - [1000, 'sp']
-        - [40000, 'skeleton']
-    joint_update_interval: [100, 20_001, 40_000]
-    sp_guided_steps_range: [-1, -1]
-    sp_guided_detach: true
-    sk_tr_batch_size: -1
-    momentum: 0.9
-    canonical_time_id: 0
-    sp_lbs: true
-    sp_merge_threshold: 0.01
-    num_superpoints: 512
-    joint_init_steps: 10000
-    #    test_time_interpolate: true
-    adaptive_control_cfg:
-        opacity_reset_interval: [3000, 3000, 15000]
-        densify_interval: [100, 500, 15000]
-        prune_interval: [100, 500, 15000]
-
-        sp_adjust_interval: [1000, 2000, 19_999]
-        sp_merge_interval: [1000, 20_000, 30_000]
+        arap:
+            lambda: 0
+            _values: [1.0e-2, 1.0e-2, 1.0e-4, 1.0e-4, 1.0e-5, 1.0e-5, 0]
+            _steps: [2000, 10000, 10000, 15000, 20000, 30000, 30001]
+            _vary: log
+        acc:
+            lambda: 0
+            _values: [0, 1.0e-5, 0]
+            _steps: [0, 10000, 10000]
+            _vary: fix
+        elastic:
+            lambda: 0
+            _values: [0, 1.0e-3, 0]
+            _steps: [0, 10000, 10000]
+            _vary: fix
 ## dataset
 scene: atlas
 dataset: WIM
@@ -51,24 +111,36 @@ dataset_cfg:
     coord_dst: 'colmap'
     use_time: True
     frame_ranges: [0, 50]
-#data_sampler: ti_inc
-#data_sampler_cfg:
-#    stages:
-#        - [3000, 0, 10, 'fix']
-#        - [5000, 0, 50, 'step']
-#        - [5000, 0, 300, 'step']
+dataset_root: ./data
 ## solver
-num_init_points: 10_000
-lr: 0.001
+optimizer: adam
+optimizer_cfg:
+    eps: 1.0e-15
+    betas: [0.9, 0.999]
+
+epochs: 80_000
+lr: 1.0e-3
+lr_scheduler_in_model: true
 lr_schedulers:
-    - [exp, 40000, 1.0, 0.01]
-    - [exp, 40000, 1.0, 0.01]
-epochs: 80000
+    - ['exp', 10_000, 1.0, 0.01]
+    - ['exp', 40_000, 1.0, 0.01]
+    - ['fix', 30_000, 0.01, 0.01]
+eval_interval: 5_000
+metric: image/PSNR
+metrics: [image, loss]
+metric_goal: max
+
 vis_interval: 1000
 checkpoint_interval: 1000
-
 checkpoint_save:
-    10000: gs_end_pc
+    7000: sampling
+    9900: sp_init
+    15000: '15000'
+    25000: '25000'
+    35000: '35000'
+    45000: '45000'
+    55000: '55000'
+    #    10000: gs_end_pc
     20000: sp_end_pc
     30000: guided
     40000: sk_start_pc

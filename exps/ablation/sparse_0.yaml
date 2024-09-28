@@ -1,0 +1,6 @@
+__base__: 'default.yaml'
+log_suffix: 'sparse/0'
+arch_cfg:
+    loss_cfg:
+        weights:
+            sparse: 0

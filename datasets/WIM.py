@@ -52,7 +52,7 @@ class WatchItMoveDataset(NERF_Base_Dataset):
         self.split = split
         self.coord_src = ops_3d.coordinate_system[coord_src.lower()]
         self.coord_dst = ops_3d.coordinate_system[coord_dst.lower()]
-        ops_3d.set_coorder_system(self.coord_dst)
+        ops_3d.set_coord_system(self.coord_dst)
         camera_indices = [idx for idx in range(20) if (idx not in test_cameras) == (split == 'train')]
 
         Tv2ws = []
@@ -237,74 +237,3 @@ class WatchItMoveDataset(NERF_Base_Dataset):
         background = self.get_background(image)
         torch.lerp(background, image[..., :3], image[..., -1:], out=image[..., :3])
         return image
-
-
-def test():
-    import matplotlib.pyplot as plt
-    db_cfg = NERF_DATASETS['WIM']['common']
-    db_cfg['root'] = Path('~/data').expanduser().joinpath(db_cfg['root'])
-    db_cfg['background'] = 'random'
-    db = WatchItMoveDataset(**db_cfg)
-    print(db)
-    print(utils.show_shape(db[0]))
-    inputs, targets, infos = db.camera_ray(0)
-    rays_o, rays_d = inputs['rays_o'], inputs['rays_d']
-    print(inputs['time_id'])
-    print(infos['Tw2v'].T)
-    print(infos['Tw2c'].T)
-    print(infos['campos'])
-    print(infos['cam_id'])
-
-    plt.subplot(121)
-    plt.imshow(targets['images'][..., :3])
-    plt.subplot(122)
-    inputs, targets, infos = db.camera_ray(1)
-    plt.imshow(targets['images'][..., :3])
-    # plt.subplot(133)
-    # plt.imshow(torch.lerp(inputs['background'], targets['images'][..., :3], targets['images'][..., 3:]))
-    plt.show()
-
-    print(db.Tv2w.shape)
-    Tv2w_ = ops_3d.look_at(torch.tensor([1., 1, 1]), at=torch.zeros(3), inv=True)[None]
-    fovy = db.FoV[1].item()
-    print(Tv2w_.shape, fovy, db.aspect, np.rad2deg(fovy))
-    with utils.vis3d:
-        utils.vis3d.add_camera_poses(db.Tv2w, fovy=np.rad2deg(fovy), aspect=db.aspect, color=(1, 0, 0), size=0.3)
-        utils.vis3d.add_camera_poses(Tv2w_, fovy=np.rad2deg(fovy), aspect=db.aspect, color=(1., 1, 0), size=0.3)
-        # utils.vis3d.add_lines(torch.stack([rays_o, rays_d + rays_o], dim=-2)[40::80, 40::80])
-        for i in range(5):
-            inputs, targets, infos = db.camera_ray(i)
-            rays_o, rays_d = inputs['rays_o'].reshape(-1, 3), inputs['rays_d'].reshape(-1, 3)
-            index = torch.randperm(rays_o.shape[0])[:i + 1]
-            print(db.samples[i], index.shape)
-            s = (1 - i / db.num_cameras)
-            utils.vis3d.add_lines(torch.stack([rays_o, rays_d * s + rays_o], dim=-2)[index])
-        # inputs = db.random_ray(None, 512)[0]
-        # rays_o, rays_d = inputs['rays_o'], inputs['rays_d']
-        # utils.vis3d.add_lines(torch.stack([rays_o, rays_d + rays_o], dim=-2), color=(0.1, 0.1, 0.1))
-        # inputs = db.random_ray(1, 10)[0]
-        # rays_o, rays_d = inputs['rays_o'], inputs['rays_d']
-        # utils.vis3d.add_lines(torch.stack([rays_o, rays_d + rays_o], dim=-2), color=(0.3, 0.3, 0.3))
-        utils.vis3d.add_lines(points=[
-            [-1., -1, -1],  # 0
-            [-1., -1., 1],  # 1
-            [-1., 1., -1.],  # 2
-            [-1., 1., 1.],  # 3
-            [1., -1., -1],  # 4
-            [1, -1, 1],  # 5
-            [1, 1, -1],  # 6
-            [1, 1, 1],  # 7
-        ],
-            line_index=[[0, 1], [0, 2], [0, 4], [1, 3], [1, 5], [2, 3], [2, 6], [3, 7], [4, 5], [4, 6], [5, 7], [6, 7]])
-        utils.vis3d.add_lines(points=[[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]],
-            line_index=[[0, 1], [0, 2], [0, 3]],
-            color=np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1.]]))
-
-    # db.batch_mode = False
-    # print('batch_mode=False', utils.show_shape(db[0, 5]))
-    # db.batch_mode = True
-    # print('batch_mode=True', utils.show_shape(db[0, 5]))
-
-
-if __name__ == '__main__':
-    test()

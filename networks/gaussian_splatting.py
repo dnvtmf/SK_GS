@@ -12,10 +12,9 @@ under the terms of the LICENSE.md file.
 
 For inquiries contact  george.drettakis@inria.fr
 """
-import logging
 import math
 import os
-from typing import NamedTuple, Mapping, Any, Dict, Optional, Union, Sequence
+from typing import NamedTuple, Mapping, Any, Dict, Optional, Union, Sequence, Type
 
 import numpy as np
 import torch
@@ -25,12 +24,23 @@ from torch import nn, Tensor
 
 import my_ext
 from my_ext import utils, get_C_function, ops_3d
-from my_ext.ops_3d.lietorch import SO3
+from lietorch import SO3
 
-from networks import NeRF_Network, NERF_NETWORKS
-from networks.encoders.sphere_harmonics import RGB2SH, eval_sh
+from networks.encoders.sphere_harmonics import RGB2SH, eval_sh, SH2RGB
 from networks.losses import LossDict
-from networks.utils import build_rotation, build_covariance_from_scaling_rotation
+from networks.GS_utils import build_covariance_from_scaling_rotation as ComputeCov3D
+from networks.renderer.gaussian_render_origin import (
+    GaussianRasterizationSettings as GaussianRasterizationSettings_offical,
+    render_gs_offical,
+)
+from networks.renderer.gaussian_render import (
+    GaussianRasterizationSettings, render,
+)
+
+from my_ext import Registry
+import logging
+
+NETWORKS = Registry()  # type: Registry[Type[GaussianSplatting]]
 
 
 class BasicPointCloud(NamedTuple):  # TODO: replace by PointClouds
@@ -74,8 +84,8 @@ def get_expon_lr_func(lr_init, lr_final, lr_delay_steps=0, lr_delay_mult=1.0, ma
     return helper
 
 
-@NERF_NETWORKS.register('Gaussian')
-class GaussianSplatting(NeRF_Network):
+@NETWORKS.register('Gaussian')
+class GaussianSplatting(nn.Module):
     param_names_map = {
         '_xyz': 'xyz',
         '_features_dc': 'f_dc',
@@ -107,19 +117,17 @@ class GaussianSplatting(NeRF_Network):
         lr_rotation=1.0,
         **kwargs
     ):
-        super().__init__(**kwargs)
+        super().__init__()
         self.convert_SHs_python = convert_SHs_python
         self.compute_cov3D = compute_cov3D
-        self.active_sh_degree = 0
+        self.register_buffer('_active_sh_degree', torch.tensor(0, dtype=torch.int))
         self.max_sh_degree = sh_degree
         self.use_so3 = use_so3
         self.use_official_gaussians_render = use_official_gaussians_render
         if self.use_official_gaussians_render:
-            from networks.renderer.gaussian_render_origin import render_gs_offical, GaussianRasterizationSettings
-            self.RasterizationSettings = GaussianRasterizationSettings
+            self.RasterizationSettings = GaussianRasterizationSettings_offical
             self.gs_rasterizer = render_gs_offical
         else:
-            from networks.renderer.gaussian_render import render, GaussianRasterizationSettings
             self.RasterizationSettings = GaussianRasterizationSettings
             self.gs_rasterizer = render
 
@@ -146,28 +154,40 @@ class GaussianSplatting(NeRF_Network):
 
         self.scaling_activation = torch.exp
         self.scaling_activation_inverse = torch.log
-        self.covariance_activation = build_covariance_from_scaling_rotation
+        self.covariance_activation = ComputeCov3D
         self.opacity_activation = torch.sigmoid
         self.opacity_activation_inverse = inverse_sigmoid
         self.rotation_activation = (lambda x: SO3.exp(x).vec()) if use_so3 else torch.nn.functional.normalize
 
-        self.adaptive_control_cfg = utils.merge_dict(adaptive_control_cfg, {
-            'densify_interval': [100, 500, 15000],
-            'densify_grad_threshold': 0.0002,
-            'densify_percent_dense': 0.01,
+        self.adaptive_control_cfg = utils.merge_dict(
+            adaptive_control_cfg, {
+                'densify_interval': [100, 500, 15000],
+                'densify_grad_threshold': 0.0002,
+                'densify_percent_dense': 0.01,
 
-            'prune_interval': [100, 500, 15000],
-            'prune_opacity_threshold': 0.005,
-            'prune_max_screen_size': 20,
-            'prune_max_percent': -1,
-            'prune_percent_dense': 0.1,
+                'prune_interval': [100, 500, 15000],
+                'prune_opacity_threshold': 0.005,
+                'prune_max_screen_size': 20,
+                'prune_max_percent': -1,
+                'prune_percent_dense': 0.1,
 
-            'opacity_reset_interval': [3000, 3000, -1],
-        })
+                'opacity_reset_interval': [3000, 3000, -1],
+            }
+        )
         self.background_type = 'black'
         self._step = -1
         self.loss_funcs = LossDict(_net=self, **utils.merge_dict(loss_cfg))
         self._task: Optional[my_ext.IterableFramework] = None
+        if len(kwargs) > 0:
+            logging.warning(f"{self.__class__.__name__} unused parameters: {list(kwargs.keys())}")
+
+    @property
+    def active_sh_degree(self) -> int:
+        return self._active_sh_degree.item()
+
+    @active_sh_degree.setter
+    def active_sh_degree(self, value):
+        self._active_sh_degree = self._active_sh_degree.new_tensor(value)
 
     def set_from_dataset(self, dataset):
         self.background_type = dataset.background_type
@@ -175,6 +195,7 @@ class GaussianSplatting(NeRF_Network):
             self.cameras_extent = getattr(dataset, 'cameras_extent')
         else:
             self.cameras_extent = ops_3d.get_center_and_diag(dataset.Tv2w[:, :3, 3])[1].item() * 1.1
+        self.lr_spatial_scale = self.cameras_extent
         logging.info(f"set camera_radius to {self.cameras_extent} ")
 
     def create_from_pcd(self, pcd: BasicPointCloud, lr_spatial_scale: float = None):
@@ -217,7 +238,7 @@ class GaussianSplatting(NeRF_Network):
             outputs['sh_features'] = features
 
         if self.compute_cov3D:
-            outputs['covariance'] = self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
+            outputs['covariance'] = self.covariance_activation(self.get_scaling * scaling_modifier, self._rotation)
         else:
             outputs['scales'] = self.scaling_activation(self._scaling)
             outputs['rotations'] = self.rotation_activation(self._rotation)
@@ -225,7 +246,7 @@ class GaussianSplatting(NeRF_Network):
 
     def prepare_inputs(self, info, t=None, background: Tensor = None, scale_modifier=1.):
         Tw2v = info['Tw2v'].view(-1, 4, 4)
-        Tw2c = info['Tw2c'].view(-1, 4, 4)
+        Tv2c = info['Tv2c'].view(-1, 4, 4)
         campos = info['campos'].view(-1, 3)
         FoV = info['FoV'].view(-1, 2)
         if t is not None:
@@ -234,32 +255,47 @@ class GaussianSplatting(NeRF_Network):
             if background is not None and background.ndim > 1:
                 background = background.unsqueeze(0)
         outputs = []
-        sh_degree = self.active_sh_degree if self.training else self.max_sh_degree
-        for b in range(Tw2c.shape[0]):
+        sh_degree = self.active_sh_degree  # if self.training else self.max_sh_degree
+        for b in range(Tw2v.shape[0]):
             if self.use_official_gaussians_render:
                 if background is None:
-                    bg = Tw2c.new_zeros(3)
+                    bg = Tw2v.new_zeros(3)
                 else:
                     if background.numel() <= 3:
                         bg = background.view(-1).expand(3).contiguous()
                     else:
                         bg = background[b, ..., :3].view(-1, 3).mean(0)
             else:
-                bg = background[b] if background is not None else None
-            raster_settings = self.RasterizationSettings(
-                image_width=info['size'][0],
-                image_height=info['size'][1],
-                tanfovx=math.tan(0.5 * FoV[b, 0]),
-                tanfovy=math.tan(0.5 * FoV[b, 1]),
-                scale_modifier=scale_modifier,
-                viewmatrix=Tw2v[b].transpose(-1, -2) if self.use_official_gaussians_render else Tw2v[b],
-                projmatrix=Tw2c[b].transpose(-1, -2) if self.use_official_gaussians_render else Tw2c[b],
-                sh_degree=sh_degree,
-                campos=campos[b],
-                prefiltered=False,
-                debug=False,
-                **(dict(bg=bg) if self.use_official_gaussians_render else {})
-            )
+                bg = (background[b] if background.ndim > 0 else background) if background is not None else None
+            if self.use_official_gaussians_render:
+                raster_settings = GaussianRasterizationSettings_offical(
+                    image_width=info['size'][0],
+                    image_height=info['size'][1],
+                    tanfovx=math.tan(0.5 * FoV[b, 0]),
+                    tanfovy=math.tan(0.5 * FoV[b, 1]),
+                    scale_modifier=scale_modifier,
+                    viewmatrix=Tw2v[b].transpose(-1, -2),
+                    projmatrix=(Tv2c[b] @ Tw2v[b]).transpose(-1, -2),
+                    sh_degree=sh_degree,
+                    campos=campos[b],
+                    prefiltered=False,
+                    debug=False,
+                    bg=bg
+                )
+            else:
+                raster_settings = GaussianRasterizationSettings(
+                    image_width=info['size'][0],
+                    image_height=info['size'][1],
+                    tanfovx=math.tan(0.5 * FoV[b, 0]),
+                    tanfovy=math.tan(0.5 * FoV[b, 1]),
+                    scale_modifier=scale_modifier,
+                    Tw2v=Tw2v[b],
+                    Tv2c=Tv2c[b],
+                    sh_degree=sh_degree,
+                    campos=campos[b],
+                    is_opengl=ops_3d.get_coord_system() != 'opencv',
+                    debug=False,
+                )
             outputs.append((raster_settings, campos[b], bg, None if t is None else t[b]))
         return outputs
 
@@ -267,30 +303,33 @@ class GaussianSplatting(NeRF_Network):
         outputs = {}
         inputs = self.prepare_inputs(info, None, background, scale_modifier)
         for b, (raster_settings, campos, bg, t) in enumerate(inputs):
-            net_out = self(campos=campos)
+            net_out = self(campos=campos, **kwargs)
             if 'hook' in kwargs:
                 net_out = kwargs['hook'](net_out)
             outputs_b = self.gs_rasterizer(**net_out, raster_settings=raster_settings)
-            images = torch.permute(outputs_b['images'], (1, 2, 0))
+            images = outputs_b['images']
+            if images.shape[0] == 3:
+                images = torch.permute(images, (1, 2, 0))
             if not self.use_official_gaussians_render and background is not None:
                 images = images + (1 - outputs_b['opacity'][..., None]) * bg.squeeze(0)
             outputs_b['images'] = images
             if b == 0:
-                outputs = {k: [v] for k, v in outputs_b.items()}
+                outputs = {k: [v] for k, v in outputs_b.items() if v is not None}
             else:
                 for k, v in outputs_b.items():
-                    outputs[k].append(v)
+                    if v is not None:
+                        outputs[k].append(v)
         return {k: torch.stack(v, dim=0) if k != 'viewspace_points' else v for k, v in outputs.items()}
 
     def change_with_training_progress(self, step=0, num_steps=1, epoch=0, num_epochs=1):
         total_step = epoch * num_steps + step + 1
         # Every 1000 its we increase the levels of SH up to a maximum degree
         if total_step % 1000 == 0 and self.active_sh_degree < self.max_sh_degree:
-            self.active_sh_degree += 1
+            self.active_sh_degree = self.active_sh_degree + 1
             logging.info(f"active_sh_degree={self.active_sh_degree} at step[{total_step}]")
         self._step = total_step
 
-    def loss(self, inputs, outputs, targets):
+    def loss(self, inputs, outputs, targets, info):
         image = outputs['images']
         gt_img = targets['images'][..., :3]
         H, W, C = image.shape[-3:]
@@ -343,9 +382,11 @@ class GaussianSplatting(NeRF_Network):
     def load_ply(self, path):
         plydata = PlyData.read(path)
 
-        xyz = np.stack((np.asarray(plydata.elements[0]["x"]),
-                        np.asarray(plydata.elements[0]["y"]),
-                        np.asarray(plydata.elements[0]["z"])), axis=1)
+        xyz = np.stack(
+            (np.asarray(plydata.elements[0]["x"]),
+             np.asarray(plydata.elements[0]["y"]),
+             np.asarray(plydata.elements[0]["z"])), axis=1
+        )
         opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis]
 
         features_dc = np.zeros((xyz.shape[0], 3, 1))
@@ -375,10 +416,10 @@ class GaussianSplatting(NeRF_Network):
             rots[:, idx] = np.asarray(plydata.elements[0][attr_name])
 
         self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
-        self._features_dc = nn.Parameter(torch.tensor(features_dc, dtype=torch.float, device="cuda").transpose(1,
-            2).contiguous().requires_grad_(True))
-        self._features_rest = nn.Parameter(torch.tensor(features_extra, dtype=torch.float, device="cuda").transpose(1,
-            2).contiguous().requires_grad_(True))
+        features_dc = torch.tensor(features_dc, dtype=torch.float, device="cuda")
+        self._features_dc = nn.Parameter(features_dc.transpose(1, 2).contiguous().requires_grad_(True))
+        features_extra = torch.tensor(features_extra, dtype=torch.float, device="cuda")
+        self._features_rest = nn.Parameter(features_extra.transpose(1, 2).contiguous().requires_grad_(True))
         self._opacity = nn.Parameter(torch.tensor(opacities, dtype=torch.float, device="cuda").requires_grad_(True))
         self._scaling = nn.Parameter(torch.tensor(scales, dtype=torch.float, device="cuda").requires_grad_(True))
         self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(True))
@@ -403,12 +444,12 @@ class GaussianSplatting(NeRF_Network):
         lr = cfg.lr
         # yapf: off
         params_groups = [
-            {'params': [self._xyz],           'lr': lr * self.lr_position_init * self.lr_spatial_scale, "name": "xyz"},
-            {'params': [self._features_dc],   'lr': lr * self.lr_feature,       "name": "f_dc",     'fix': True},
-            {'params': [self._features_rest], 'lr': lr * self.lr_feature / 20,  "name": "f_rest",   'fix': True},
-            {'params': [self._opacity],       'lr': lr * self.lr_opacity,       "name": "opacity",  'fix': True},
-            {'params': [self._scaling],       'lr': lr * self.lr_scaling,       "name": "scaling",  'fix': True},
-            {'params': [self._rotation],      'lr': lr * self.lr_rotation,      "name": "rotation", 'fix': True},
+            {'params': [self._xyz], 'lr': lr * self.lr_position_init * self.lr_spatial_scale, "name": "xyz"},
+            {'params': [self._features_dc], 'lr': lr * self.lr_feature, "name": "f_dc", 'fix': True},
+            {'params': [self._features_rest], 'lr': lr * self.lr_feature / 20, "name": "f_rest", 'fix': True},
+            {'params': [self._opacity], 'lr': lr * self.lr_opacity, "name": "opacity", 'fix': True},
+            {'params': [self._scaling], 'lr': lr * self.lr_scaling, "name": "scaling", 'fix': True},
+            {'params': [self._rotation], 'lr': lr * self.lr_rotation, "name": "rotation", 'fix': True},
         ]
         # yapf: on
         self.lr_scheduler = {'xyz': get_expon_lr_func(
@@ -419,10 +460,14 @@ class GaussianSplatting(NeRF_Network):
         )}
         return params_groups
 
-    def update_learning_rate(self, *args, **kwargs):
-        for group in self._task.optimizer.param_groups:
+    def update_learning_rate(self, step: int = None, optimizer=None, *args, **kwargs):
+        if optimizer is None:
+            optimizer = self._task.optimizer
+        if step is None:
+            step = self._task.global_step + 1
+        for group in optimizer.param_groups:
             if group.get('name', None) == 'xyz':
-                group['lr'] = self.lr_scheduler['xyz'](self._task.global_step + 1)
+                group['lr'] = self.lr_scheduler['xyz'](step)
                 return
         return
 
@@ -447,13 +492,6 @@ class GaussianSplatting(NeRF_Network):
     @property
     def get_opacity(self):
         return self.opacity_activation(self._opacity)
-
-    def get_colors(self, features: Tensor, points: Tensor, campos: Tensor):
-        shs_view = features.transpose(1, 2).view(-1, 3, (self.max_sh_degree + 1) ** 2)
-        dir_pp = (points - campos.repeat(features.shape[0], 1))
-        dir_pp_normalized = dir_pp / dir_pp.norm(dim=1, keepdim=True)
-        sh2rgb = eval_sh(self.active_sh_degree, shs_view, dir_pp_normalized)
-        return torch.clamp_min(sh2rgb + 0.5, 0.0)
 
     def training_setup(self):
         # self.percent_dense = percent_dense
@@ -512,7 +550,8 @@ class GaussianSplatting(NeRF_Network):
                 if op == 'concat':
                     stored_state["exp_avg"] = torch.cat([stored_state["exp_avg"], torch.zeros_like(new_tensor)], dim)
                     stored_state["exp_avg_sq"] = torch.cat(
-                        [stored_state["exp_avg_sq"], torch.zeros_like(new_tensor)], dim)
+                        [stored_state["exp_avg_sq"], torch.zeros_like(new_tensor)], dim
+                    )
                 elif op == 'prune':
                     stored_state["exp_avg"] = stored_state["exp_avg"][mask]
                     stored_state["exp_avg_sq"] = stored_state["exp_avg_sq"][mask]
@@ -553,8 +592,10 @@ class GaussianSplatting(NeRF_Network):
         padded_grad = torch.zeros((n_init_points,), device=device)
         padded_grad[:grads.shape[0]] = grads.squeeze()
         selected_pts_mask = padded_grad >= grad_threshold
-        selected_pts_mask = torch.logical_and(selected_pts_mask,
-            torch.gt(torch.amax(self.get_scaling, dim=1), scene_extent))
+        selected_pts_mask = torch.logical_and(
+            selected_pts_mask,
+            torch.gt(torch.amax(self.get_scaling, dim=1), scene_extent)
+        )
 
         stds = self.get_scaling[selected_pts_mask].repeat(N, 1)
         means = torch.zeros((stds.size(0), 3), device=device)
@@ -565,14 +606,15 @@ class GaussianSplatting(NeRF_Network):
             rots = ops_3d.rotation.quaternion_to_R(self._rotation[selected_pts_mask]).repeat(N, 1, 1)
         # rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N, 1, 1)
         new_params = {
-            'xyz': torch.bmm(rots, samples[..., None]).squeeze(-1) + self.points[selected_pts_mask].repeat(N, 1),
-            'scaling': self.scaling_activation_inverse(self.get_scaling[selected_pts_mask].repeat(N, 1) / (0.8 * N))
+            '_xyz': torch.bmm(rots, samples[..., None]).squeeze(-1) + self.points[selected_pts_mask].repeat(N, 1),
+            '_scaling': self.scaling_activation_inverse(self.get_scaling[selected_pts_mask].repeat(N, 1) / (0.8 * N))
         }
         for param_name, opt_name in self.param_names_map.items():
-            if opt_name == 'xyz' or opt_name == 'scaling':
-                continue
-            param = getattr(self, param_name)
-            new_params[opt_name] = param[selected_pts_mask].repeat(N, *[1] * (param.ndim - 1))
+            if param_name == '_xyz' or param_name == '_scaling':
+                new_params[opt_name] = new_params.pop(param_name)
+            else:
+                param = getattr(self, param_name)
+                new_params[opt_name] = param[selected_pts_mask].repeat(N, *[1] * (param.ndim - 1))
 
         self.densification_postfix(optimizer, **new_params, mask=selected_pts_mask, N=N)
 
@@ -582,8 +624,10 @@ class GaussianSplatting(NeRF_Network):
     def densify_and_clone(self, optimizer: torch.optim.Optimizer, grads, grad_threshold, scene_extent):
         # Extract points that satisfy the gradient condition
         selected_pts_mask = torch.norm(grads, dim=-1) >= grad_threshold
-        selected_pts_mask = torch.logical_and(selected_pts_mask,
-            torch.le(torch.amax(self.get_scaling, dim=1), scene_extent))
+        selected_pts_mask = torch.logical_and(
+            selected_pts_mask,
+            torch.le(torch.amax(self.get_scaling, dim=1), scene_extent)
+        )
 
         masked_params = {}
         for param_name, opt_name in self.param_names_map.items():
@@ -608,7 +652,8 @@ class GaussianSplatting(NeRF_Network):
 
     def reset_opacity(self, optimizer):
         opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity) * 0.01))
-        self._opacity = self.change_optimizer(optimizer, opacities_new, name='opacity', op='replace')["opacity"]
+        name = self.param_names_map['_opacity']
+        self._opacity = self.change_optimizer(optimizer, opacities_new, name=name, op='replace')[name]
 
     @torch.no_grad()
     def adaptive_control(self, inputs, outputs, optimizer, step: int):
@@ -707,5 +752,52 @@ def convert_offical_to_ours():
         print('save converted path to', save_path)
 
 
+def vis_trained():
+    from my_ext.utils.gui.viewer_3D import simple_3d_viewer
+    from my_ext import ops_3d
+
+    path = '/home/wan/wan_code/NeRF/results/guassian_lego.ply'
+    path = '/home/wan/wan_code/NeRF/results/Gaussian/lego/last.ply'
+    model = GaussianSplatting(3)
+    model.load_ply(path)
+
+    @torch.no_grad()
+    def rendering(Tw2v, fovy, size):
+        Tw2v = Tw2v.cuda()
+        Tw2v = ops_3d.convert_coord_system(Tw2v, 'opengl', 'colmap')
+        Tv2c = ops_3d.perspective(size=size, fovy=fovy).cuda()
+        # print(Tv2c)
+        fovx = ops_3d.fovx_to_fovy(fovy, size[1] / size[0])
+        Tv2c = ops_3d.opencv.perspective(fovy, size=size).cuda()
+        # print(Tv2c_2)
+        # exit()
+        Tw2c = Tv2c @ Tw2v
+        Tv2w = torch.inverse(Tw2v)
+        tanfovx = math.tan(0.5 * fovx)
+        tanfovy = math.tan(0.5 * fovy)
+        bg_color = [1, 1, 1]  # if dataset.background == 'white' else [0, 0, 0]
+        bg_color = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+        raster_settings = model.RasterizationSettings(
+            image_height=size[1],
+            image_width=size[0],
+            tanfovx=tanfovx,
+            tanfovy=tanfovy,
+            scale_modifier=1.0,
+            viewmatrix=Tw2v.T,
+            projmatrix=Tw2c.T,
+            sh_degree=model.max_sh_degree,
+            campos=Tv2w[:3, 3],
+            prefiltered=False,
+            debug=False,
+            **(dict(bg=bg_color) if model.use_official_gaussians_render else {})
+        )
+        return model.gs_rasterizer(**model(), raster_settings=raster_settings)['images']
+
+    simple_3d_viewer(rendering)
+
+
 if __name__ == '__main__':
     convert_offical_to_ours()
+    # vis_trained()
+    # test_compute_cov3D()
+    # test_compute_cov2D()

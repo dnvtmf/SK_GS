@@ -4,7 +4,7 @@ import torch
 from torch import Tensor
 
 from my_ext import get_C_function, try_use_C_extension, ops_3d
-from my_ext.ops_3d.lietorch import SO3
+from lietorch import SO3
 
 
 class _compute_cov3D(torch.autograd.Function):
@@ -75,8 +75,8 @@ def build_scaling_rotation(s, r):
 
 
 @try_use_C_extension(_compute_cov3D.apply, "gs_compute_cov3D_forward", "gs_compute_cov3D_backward")
-def build_covariance_from_scaling_rotation(scaling, scaling_modifier, rotation):
-    L = build_scaling_rotation(scaling_modifier * scaling, rotation)
+def build_covariance_from_scaling_rotation(scaling, rotation):
+    L = build_scaling_rotation(scaling, rotation)
     actual_covariance = L @ L.transpose(1, 2)
     symm = strip_symmetric(actual_covariance)
     return symm

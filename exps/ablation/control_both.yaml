@@ -1,0 +1,5 @@
+__base__: 'default.yaml'
+log_suffix: 'control_both'
+
+sp_adjust_interval: [1000, 2000, 24_999]
+sp_merge_interval: [500, 15_000, 24_999]

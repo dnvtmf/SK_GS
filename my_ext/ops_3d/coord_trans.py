@@ -7,7 +7,7 @@
 (LLFF坐标系) DRB,  +x 朝下, +y 朝外,  +z 朝左
 (Pytorch3d坐标系) LUF,  +x 朝里, +y 朝上,  +z 朝右
 (见: https://zhuanlan.zhihu.com/p/593204605/ )
-OpenGL:            Blender:       COLMAP/OpenCV:    LLFF     Pytorch3D
+OpenGL/Vulkan:     Blender:       COLMAP/OpenCV:    LLFF     Pytorch3D
     y              z                   z                     y
     ↑              ↑                 ↗                       ↑
     |              |   y            .-------> x  z <------.  |   x
@@ -16,11 +16,13 @@ OpenGL:            Blender:       COLMAP/OpenCV:    LLFF     Pytorch3D
    ↙                                ↓                     ↓
   z                                 y                     x
 裁剪空间Clip space为左手系: +x指向右手边, +y 指向上方, +z指向屏幕内; z 的坐标值越小，距离观察者越近
-y [-1, 1]
-↑
-|   z [-1, 1]
-| ↗
-.------> x [-1, 1]
+y [-1, 1]                      z [-1, 1]
+↑                            ↗
+|                          .----> x [-1, 1]
+|   z [-1, 1]              |
+| ↗                        ↓
+.------> x [-1, 1]         y [-1, 1]
+OpenGL/DirectX              Vulkan/OpenCV (右手系)
 屏幕坐标系： X 轴向右为正，Y 轴向下为正，坐标原点位于窗口的左上角 (左手系: z轴向屏幕内，表示深度)
     z
   ↗
@@ -30,13 +32,11 @@ y [-1, 1]
 ↓
 y
 坐标变换矩阵: T{s}2{d} Transform from {s} space to {d} space
-{s} 和 {d} 包括世界World坐标系、观察View坐标系、裁剪Clip坐标系、屏幕Screen坐标
-
-Tv2s即相机内参，Tw2v即相机外参
+{s} 和 {d} 包括世界World坐标系、观察View坐标系、裁剪Clip坐标系、屏幕Screen坐标系
+例：Tv2s即相机内参，Tw2v即相机外参
 """
 import logging
-from typing import Optional, Tuple, Any
-
+from typing import Optional, Tuple, Union, Any
 from torch import Tensor
 
 from .coord_trans_common import *
@@ -45,9 +45,12 @@ from . import coord_trans_opencv, coord_trans_opengl
 TensorType = Union[float, int, np.ndarray, Tensor]
 
 __all__ = [
-    'COORDINATE_SYSTEM', 'coordinate_system', 'set_coorder_system',
+    'coordinate_system', 'set_coord_system', 'get_coord_system',
     'convert_coord_system_matrix', 'convert_coord_system_points', 'convert_coord_system', 'opengl_to_opencv',
-    'coord_spherical_to', 'coord_to_spherical', 'look_at', 'camera_intrinsics', 'perspective', 'ortho'
+    'coord_spherical_to', 'coord_to_spherical',
+    'look_at', 'look_at_get',
+    'camera_intrinsics', 'perspective', 'ortho',
+    'point2pixel'
 ]
 COORDINATE_SYSTEM = 'opengl'
 coordinate_system = {
@@ -130,6 +133,8 @@ def convert_coord_system_matrix(T: Tensor, src='opengl', dst='opengl') -> Tensor
     Returns:
         Tensor: converted transformation matrix
     """
+    src = coordinate_system[src.lower()]
+    dst = coordinate_system[dst.lower()]
     if src == dst:
         return T
     T = T.clone()
@@ -203,9 +208,11 @@ def convert_coord_system_points(points: Tensor, src='opengl', dst='opengl') -> T
 _coord_spherical_to = coord_trans_opengl.coord_spherical_to
 _coord_to_spherical = coord_trans_opengl.coord_to_spherical
 _look_at = coord_trans_opengl.look_at
+_look_at_get = coord_trans_opengl.look_at_get
 _camera_intrinsics = coord_trans_opengl.camera_intrinsics
 _perspective = coord_trans_opengl.perspective
 _ortho = coord_trans_opengl.ortho
+_point2pixel = coord_trans_opengl.point2pixel
 
 
 def coord_spherical_to(radius: TensorType, thetas: TensorType, phis: TensorType) -> Tensor:
@@ -235,6 +242,11 @@ def coord_to_spherical(points: Tensor):
 
 def look_at(eye: Tensor, at: Tensor = None, up: Tensor = None, inv=False) -> Tensor:
     return _look_at(eye, at, up, inv)
+
+
+def look_at_get(Tv2w: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
+    """return eye, at, up"""
+    return _look_at_get(Tv2w)
 
 
 def camera_intrinsics(focal=None, cx_cy=None, size=None, fovy=np.pi, inv=False, **kwargs) -> Tensor:
@@ -285,31 +297,60 @@ def ortho(l=-1., r=1.0, b=-1., t=1.0, n=0.1, f=1000.0, device=None):
     return _ortho(l, r, b, t, n, f, device)
 
 
-def set_coorder_system(coord):
+def point2pixel(
+    points: Tensor, Tw2v: Tensor = None, Tv2s: Tensor = None, Tv2c: Tensor = None, Tw2c: Tensor = None,
+    size: Tuple[int, int] = None
+):
+    """
+    Args:
+        points (Tensor):  containing 3D points with shape [..., 3] or [..., 4]
+        Tw2v (Union[None, Tensor]): world to view space transformation matrix with shape [..., 4, 4]
+        Tv2s (Optional[Tensor]): view to screen space transformation matrix with shape [..., 3, 3]
+        Tv2c (Optional[Tensor]): view to clip space transformation matrix with shape [..., 4, 4]
+        Tw2c (Optional[Tensor]): world to clip space transformation matrix with shape [..., 4, 4]
+        size (Optional[Tuple[int, int]]): (W, H)
+    Returns:
+        (Tensor, Tensor): pixel containing 2D pixel with shape [..., 2] and depth: [...]
+    """
+    return _point2pixel(points, Tw2v, Tv2s, Tv2c, Tw2c, size)
+
+
+def set_coord_system(coord):
     coord = coordinate_system[coord.lower()]
     global COORDINATE_SYSTEM
     COORDINATE_SYSTEM = coord
-    global _coord_spherical_to, _coord_to_spherical, _look_at, _camera_intrinsics, _perspective, _ortho
+    global _coord_spherical_to, _coord_to_spherical, _look_at, _look_at_get, _camera_intrinsics, _perspective, _ortho
+    global _point2pixel
     if coord == 'opengl':
         _coord_spherical_to = coord_trans_opengl.coord_spherical_to
         _coord_to_spherical = coord_trans_opengl.coord_to_spherical
         _look_at = coord_trans_opengl.look_at
+        _look_at_get = coord_trans_opengl.look_at_get
         _camera_intrinsics = coord_trans_opengl.camera_intrinsics
         _perspective = coord_trans_opengl.perspective
         _ortho = coord_trans_opengl.ortho
+        _point2pixel = coord_trans_opengl.point2pixel
     elif coord == 'opencv':
         _coord_spherical_to = coord_trans_opencv.coord_spherical_to
         _coord_to_spherical = coord_trans_opencv.coord_to_spherical
         _look_at = coord_trans_opencv.look_at
+        _look_at_get = coord_trans_opencv.look_at_get
         _camera_intrinsics = coord_trans_opencv.camera_intrinsics
         _perspective = coord_trans_opencv.perspective
         _ortho = coord_trans_opencv.ortho
+        _point2pixel = coord_trans_opencv.point2pixel
     else:
         raise NotImplementedError(f"coord {coord} not supported")
     logging.info(f"[red]set coordinate system to {coord}")
 
 
+def get_coord_system():
+    global COORDINATE_SYSTEM
+    return COORDINATE_SYSTEM
+
+
 def test_coord_system():
+    import cv2
     from my_ext.utils import set_printoptions
     set_printoptions()
     """

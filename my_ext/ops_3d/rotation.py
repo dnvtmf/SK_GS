@@ -12,9 +12,8 @@ reference:
 import torch
 from torch import Tensor
 import torch.nn.functional as F
-
 from . import quaternion
-from .lietorch import SO3
+from lietorch import SO3
 
 
 def _vec2ss_matrix(vector: Tensor):
@@ -67,8 +66,16 @@ def euler_to_quaternion(x=0, y=0, z=0., order='xyz'):
 def quaternion_to_R(q: Tensor):
     if q.shape[-1] == 7:
         q = q[..., 3:]
-    # assert q.shape[-1] == 4  # [x, y, z, w]
-    return quaternion.toR(q)
+    assert q.shape[-1] == 4  # [x, y, z, w]
+    x, y, z, w = q.unbind(-1)
+    # yapf: disable
+    R = torch.stack([
+        1 - 2 * y * y - 2 * z * z, 2 * x * y - 2 * w * z, 2 * w * y + 2 * x * z,
+        2 * x * y + 2 * w * z, 1 - 2 * x * x - 2 * z * z, 2 * y * z - 2 * w * x,
+        2 * x * z - 2 * w * y, 2 * w * x + 2 * y * z, 1 - 2 * x * x - 2 * y * y,
+    ], dim=-1).reshape(*x.shape, 3, 3)
+    # yapf: enable
+    return R
 
 
 def quaternion_to_axis_angle(q: Tensor):
@@ -173,17 +180,18 @@ def R_to_euler(R: Tensor, order='xyz'):
 
 
 def R_to_quaternion(R: Tensor, order='xyzw'):
-    w = 0.5 * torch.sqrt(R[..., 0, 0] + R[..., 1, 1] + R[..., 2, 2] + 1)
-    w_ = 1. / (4 * w + 1e-10)  # 避免数值不稳定, 存在不用除法的算法
+    w = 0.5 * torch.sqrt((R[..., 0, 0] + R[..., 1, 1] + R[..., 2, 2] + 1).clamp_min(1e-10))  # 避免数值不稳定
+    w_ = 0.25 / w
     x = (R[..., 2, 1] - R[..., 1, 2]) * w_
     y = (R[..., 0, 2] - R[..., 2, 0]) * w_
     z = (R[..., 1, 0] - R[..., 0, 1]) * w_
     if order == 'xyzw':
-        return torch.stack([x, y, z, w], dim=-1)
+        q = torch.stack([x, y, z, w], dim=-1)
     elif order == 'wxyz':
-        return torch.stack([w, x, y, z], dim=-1)
+        q = torch.stack([w, x, y, z], dim=-1)
     else:
         raise ValueError(f"Unsupported order {order}")
+    return quaternion.normalize(q)
 
 
 def R_to_axis_angle(R: Tensor):
@@ -259,6 +267,10 @@ def direction_vector_to_quaternion(before: Tensor, after: Tensor) -> Tensor:
     axis = torch.linalg.cross(before, after)
     axis = axis / axis.norm(dim=-1, keepdim=True)
     return axis_angle_to_quaternion(axis, theta[..., 0])
+
+
+def inverse(R: Tensor):
+    return R.transpose(-1, -2)
 
 
 def test():

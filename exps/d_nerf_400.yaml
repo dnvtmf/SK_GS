@@ -1,0 +1,4 @@
+exp_name: SK_GS/DNeRF_400
+__base__: 'd_nerf.yaml'
+dataset_cfg:
+    downscale: 2

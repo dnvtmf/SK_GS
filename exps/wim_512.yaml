@@ -1,0 +1,4 @@
+exp_name: SK_GS/WIM512
+__base__: 'wim.yaml'
+dataset_cfg:
+    image_size: [512, 512]

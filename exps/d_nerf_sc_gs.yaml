@@ -1,5 +1,5 @@
-exp_name: SK_GS/DNeRF
-arch: SkeletonGS
+exp_name: SK_GS/DNeRF_SC
+arch: SK_GS
 arch_cfg:
     sh_degree: 3
     net_cfg:
@@ -14,14 +14,9 @@ arch_cfg:
         init_fix: 2_000
         init: 8_000
         sp_fix: 3_000
-        sp: 27_000
-        sk_init: 0
-        sk_fix: 0
-        sk: 40_000
+        sp: 67_000
     num_knn: 3
-    canonical_time_id: 0
-    use_canonical_net: True
-    canonical_replace_steps: [20_000]
+    canonical_time_id: -1
     ## superpoints
     num_superpoints: 512
     local_frame: true
@@ -34,13 +29,13 @@ arch_cfg:
     init_sampling_step: 7500
     node_max_num_ratio_during_init: 16
     LBS_method: weighted_kernel
-    warp_method: LBS_c # LBS_c, LBS, largest
+    warp_method: LBS_c
     # get skeleton
-    joint_update_interval: [1_000, 20_000, 40_000]
+    joint_update_interval: [-1, 20_000, 40_000]
     sk_momentum: 0.9
-    sp_guided_detach: true
-    guided_step_start: 40000
-    joint_init_steps: 10_000
+    sp_guided_detach: false
+    guided_step_start: -1
+    joint_init_steps: -1
     ## skeleton
     sk_knn_num: 5
     sk_use_features: true
@@ -64,34 +59,21 @@ arch_cfg:
     lr_deform_scale: 1.0
     adaptive_control_cfg:
         opacity_reset_interval: [3000, 3000, -1]
-        densify_interval: [100, 500, 25_000]
-        prune_interval: [100, 500, 25_000]
-
+        densify_interval: [100, 500, 50_000]
+        prune_interval: [100, 500, 50_000]
+        
         densify_grad_threshold: 0.0002
         densify_percent_dense: 0.01
         prune_opacity_threshold: 0.005
         prune_max_screen_size: 20
         prune_percent_dense: 0.1
-
+        
         sp_adjust_interval: [-1, 10_000, 20_000]
         sp_merge_interval: [-1, 20_000, 30_000]
     loss_cfg:
         default: 0.0
         image: {method: l1, lambda: 0.8}
         ssim: 0.2
-        joint: 1.0
-        joint_all: 1.0
-        cmp_p: 1.0
-        cmp_t: 0.1
-        cmp_r: 0.1
-        cmp_s: 0.1
-        re_pos: 0 # reconstruct position
-        sparse: 0.2
-        smooth: 0 # .1
-        sp_arap_t: 0 # .01
-        sp_arap_ct: 0
-        #        p_arap_ct_init: 1.0
-        c_net: 1.0
         arap:
             lambda: 0
             _values: [1.0e-2, 1.0e-2, 1.0e-4, 1.0e-4, 1.0e-5, 1.0e-5, 0]
@@ -108,7 +90,6 @@ arch_cfg:
             _steps: [0, 10000, 10000]
             _vary: fix
 ## dataset
-num_init_points: 2_000
 scene: jumpingjacks
 dataset: DNeRF
 dataset_cfg:
@@ -118,8 +99,10 @@ dataset_cfg:
     coord_dst: colmap
     use_time: true
     with_rays: false
+    downscale: 2
 dataset_root: ./data
 ## solver
+num_init_points: 2_000
 optimizer: adam
 optimizer_cfg:
     eps: 1.0e-15
@@ -130,8 +113,7 @@ lr: 1.0e-3
 lr_scheduler_in_model: true
 lr_schedulers:
     - ['exp', 10_000, 1.0, 0.01]
-    - ['exp', 30_000, 1.0, 0.01]
-    - ['exp', 40_000, 1.0, 0.01]
+    - ['exp', 70_000, 1.0, 0.01]
 eval_interval: 5_000
 metric: image/PSNR
 metrics: [image, loss]
@@ -139,15 +121,4 @@ metric_goal: max
 
 vis_interval: 1000
 checkpoint_interval: 1000
-checkpoint_save:
-    7000: sampling
-    9900: sp_init
-    15000: '15000'
-    25000: '25000'
-    35000: '35000'
-    45000: '45000'
-    55000: '55000'
-    #    10000: gs_end_pc
-    20000: sp_end_pc
-    30000: guided
-    40000: sk_start_pc
+test_kwargs: {stage: 'sp'}

@@ -76,7 +76,7 @@ class DNeRFDataset(NERF_Base_Dataset):
         self.mask_dir = mask_dir
         self.coord_src = ops_3d.coordinate_system[coord_src.lower()]
         self.coord_dst = ops_3d.coordinate_system[coord_dst.lower()]
-        ops_3d.set_coorder_system(self.coord_dst)
+        ops_3d.set_coord_system(self.coord_dst)
         self.weighted_sample = weighted_sample
 
         self.with_rays = with_rays
@@ -242,7 +242,7 @@ class DNeRFDataset(NERF_Base_Dataset):
         image = self.images[index, ::s, ::s]
         infos = {
             'Tw2v': self.Tw2v[index],
-            'Tw2c': (self.Tv2c if self.Tv2c.ndim == 2 else self.Tv2c[index]) @ self.Tw2v[index],
+            'Tv2c': (self.Tv2c if self.Tv2c.ndim == 2 else self.Tv2c[index]),
             'Tv2s': Tv2s,
             'size': (image.shape[-2], image.shape[-3]),
             'index': index,
@@ -284,134 +284,3 @@ class DNeRFDataset(NERF_Base_Dataset):
             f"num_frames: {self.num_frames}, num_cameras: {self.num_cameras}",
         ]
         return super().extra_repr() + s
-
-
-def test():
-    import matplotlib.pyplot as plt
-    utils.set_printoptions()
-    cfg = {**NERF_DATASETS['DNeRF']['common'], **NERF_DATASETS['DNeRF']['train']}
-    scene = 'hook'
-    cfg['root'] = Path('~/data', cfg['root']).expanduser()
-    # cfg = {}
-    # cfg['root'] = Path('~/data/NeRF/wan/static_lego').expanduser()
-    # cfg['camera_file'] = 'camera_transforms.json'
-    cfg['background'] = 'black'
-    cfg['scene'] = scene
-    # cfg['camera_noise_R'] = 1.0e-3
-    # cfg['camera_noise_t'] = 0
-    # cfg['near'] = 0.1
-    # cfg['far'] = 1000.
-    # cfg['far'] = 1000.
-    db = DNeRFDataset(**cfg)
-    # inputs, targets, infos = db.camera_ray(0)
-    # print(inputs['rays_o'])
-    # print(inputs['rays_d'])
-    # print(infos['Tw2v'])
-    # print(infos['Tw2v'].inverse())
-    # print(targets['images'][..., 400:410, 400:410, :])
-    # return
-    print(db)
-    print(utils.show_shape(db.camera_ray(0)))
-    print(utils.show_shape(db.random_ray(0, 1024)))
-    print(utils.show_shape(db.random_ray(None, 1024)))
-
-    inputs, targets, infos = db.random_ray(0, 1024)
-    aabb = torch.tensor([-1, -1., -1., 1., 1., 1.]).cuda()
-    rays_o, rays_d = inputs['rays_o'], inputs['rays_d']
-    # from NeRF.networks.ray_sampler import near_far_from_aabb
-    # near, far = near_far_from_aabb(rays_o.cuda(), rays_d.cuda(), aabb)
-    # print(*near.aminmax(), *far.aminmax())
-    # print()
-
-    inputs, targets, infos = db.camera_ray(0)
-    rays_o, rays_d = inputs['rays_o'], inputs['rays_d']
-
-    plt.subplot(131)
-    plt.imshow(targets['images'][..., :3])
-    plt.subplot(132)
-    plt.imshow(inputs['background'].expand_as(targets['images'][..., :3]))
-    plt.subplot(133)
-    plt.imshow(torch.lerp(inputs['background'], targets['images'][..., :3], targets['images'][..., 3:]))
-    plt.show()
-
-    with utils.vis3d:
-        utils.vis3d.add_camera_poses(db.Tv2w, None, np.rad2deg(db.FoV[1].item()), db.aspect, color=(1, 0, 0), size=0.5)
-        # utils.vis3d.add_camera_poses(db.Tv2w_origin, None, np.rad2deg(db.FoV[1].item()), db.aspect, 0.5, (0, 1, 0))
-        # utils.vis3d.add_lines(torch.stack([db.Tv2w[:, :3, 3], db.Tv2w_origin[:, :3, 3]], dim=1), color=(0.1, 0.1, 0.1))
-        # utils.vis3d.add_lines(points=db.Tv2w[:, :3, 3], color=(0.1, 0.1, 0.1))
-        utils.vis3d.add_lines(torch.stack([rays_o, rays_d + rays_o], dim=-2)[40::80, 40::80])
-        inputs = db.random_ray(None, 512)[0]
-        rays_o, rays_d = inputs['rays_o'], inputs['rays_d']
-        utils.vis3d.add_lines(torch.stack([rays_o, rays_d + rays_o], dim=-2), color=(0.1, 0.1, 0.1))
-        inputs = db.random_ray(1, 10)[0]
-        rays_o, rays_d = inputs['rays_o'], inputs['rays_d']
-        utils.vis3d.add_lines(torch.stack([rays_o, rays_d + rays_o], dim=-2), color=(0.3, 0.3, 0.3))
-        utils.vis3d.add_lines(points=[
-            [-1., -1, -1],  # 0
-            [-1., -1., 1],  # 1
-            [-1., 1., -1.],  # 2
-            [-1., 1., 1.],  # 3
-            [1., -1., -1],  # 4
-            [1, -1, 1],  # 5
-            [1, 1, -1],  # 6
-            [1, 1, 1],  # 7
-        ],
-            line_index=[[0, 1], [0, 2], [0, 4], [1, 3], [1, 5], [2, 3], [2, 6], [3, 7], [4, 5], [4, 6], [5, 7], [6, 7]])
-    db.batch_mode = False
-    print('batch_mode=False', utils.show_shape(db[0, 5]))
-    db.batch_mode = True
-    print('batch_mode=True', utils.show_shape(db[0, 5]))
-
-
-def test2():
-    import matplotlib.pyplot as plt
-    utils.set_printoptions(4)
-    print(Path(__file__).resolve())
-    root = Path('/mnt/a/Projects/MeshNeRF/data/dtu')
-    if not root.exists():
-        root = Path('~/data/ReconComp2023/preprocessed_dtu').expanduser()
-    assert root.is_dir()
-    db = DNeRFDataset(root=root, camera_file='cameras_sphere.npz', img_dir='image', mask_dir='mask', mask_suffix='.png',
-        for_ingp=False, random_camera=False)
-    # return
-    print(db)
-    print(utils.show_shape(db.camera_ray(0)))
-    print(utils.show_shape(db.random_ray(0, 1024)))
-    print(utils.show_shape(db.random_ray(None, 1024)))
-
-    inputs, targets, infos = db.camera_ray(0)
-    rays_o, rays_d = inputs['rays_o'], inputs['rays_d']
-    plt.subplot(131)
-    plt.imshow(targets['images'][..., :3])
-    plt.subplot(132)
-    plt.imshow(inputs['background'])
-    plt.subplot(133)
-    plt.imshow(torch.lerp(inputs['background'], targets['images'][..., :3], targets['images'][..., 3:]))
-    plt.show()
-    print('camera position', infos['campos'])
-    poses = np.array([[[1, 0, 0, 1], [0, 1, 0, 1], [0, 0, 1, 1], [0, 0, 0, 1.]],
-                      [[1, 0, 0, -1], [0, 1, 0, -1], [0, 0, 1, 1], [0, 0, 0, 1.]]],
-        dtype=np.float32)
-
-    # with utils.vis3d:
-    utils.vis3d.add_camera_poses(db.Tv2w, None, np.rad2deg(db.FoV[1].item()), db.aspect, color=(1, 0, 0), size=0.1)
-    utils.vis3d.add_lines(torch.stack([rays_o, rays_d + rays_o], dim=-2)[40::80, 40::80])
-    inputs = db.random_ray(None, 512)[0]
-    rays_o, rays_d = inputs['rays_o'], inputs['rays_d']
-    utils.vis3d.add_lines(torch.stack([rays_o, rays_d + rays_o], dim=-2), color=(0.1, 0.1, 0.1))
-    inputs = db.random_ray(1, 10)[0]
-    rays_o, rays_d = inputs['rays_o'], inputs['rays_d']
-    utils.vis3d.add_lines(torch.stack([rays_o, rays_d + rays_o], dim=-2), color=(0.3, 0.3, 0.3))
-    print('end')
-    utils.vis3d.show()
-    # with utils.vis3d:
-    #     utils.vis3d.add_camera_poses(Tv2w=poses, color=(1, 0, 0))
-    #     utils.vis3d.add_lines(np.array([[0, 0, 0], [0, 0, 1], [1, 0, 0]]))
-    # db.batch_mode = False
-    # print('batch_mode=False', utils.show_shape(db[0, 5]))
-    # db.batch_mode = True
-    # print('batch_mode=True', utils.show_shape(db[0, 5]))
-
-
-if __name__ == '__main__':
-    test()

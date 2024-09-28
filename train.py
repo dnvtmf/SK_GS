@@ -1,4 +1,5 @@
 import logging
+from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -7,27 +8,54 @@ import torch.nn.functional as F
 
 import my_ext as ext
 from my_ext import utils, ops_3d
-
-import networks, data_loader
+import networks, data_loader, datasets
+# from datasets.NerfiesDataset import NerfiesDataset
 from datasets.colmap_dataset import ColmapDataset, fetchPly, storePly
-from nerf import NeRFTask
-from networks.encoders.sphere_harmonics import SH2RGB
-from networks.gaussian_splatting import BasicPointCloud
-from data_loader.ti_batch_sampler import TimeIncrementalBatchSampler
+# from datasets.colmap_dynerf_dataset import DyNeRFColmapDataset
+from networks.gaussian_splatting import BasicPointCloud, SH2RGB
 
 
-class GaussianTrainTask(NeRFTask):
+class GaussianTrainTask(ext.IterableFramework):
     model: networks.gaussian_splatting.GaussianSplatting
+    train_db: Optional[datasets.NERF_Base_Dataset]
+    eval_db: Optional[datasets.NERF_Base_Dataset]
+    test_db: Optional[datasets.NERF_Base_Dataset]
 
     def __init__(self, *args, **kwargs):
-        super(GaussianTrainTask, self).__init__(*args, m_data_loader=data_loader, **kwargs)
+        super(GaussianTrainTask, self).__init__(*args, m_data_loader=data_loader, m_datasets=datasets, **kwargs)
 
     def extra_config(self, parser):
+        networks.build.options(parser)
+        parser.add_argument('--exp-name', default='nerf', help='The name of experiments')
+        utils.add_cfg_option(parser, '--train-kwargs', help='extra train kwargs')
+        utils.add_cfg_option(parser, '--eval-kwargs', help='extra eval kwargs')
+        utils.add_cfg_option(parser, '--test-kwargs', help='extra test kwargs')
+        utils.add_bool_option(parser, '--save-video', default=True, help='Save the test results to vedio')
+        parser.add_argument('--eval-num-steps', default=-1, type=int, help='The steps when evaluate during training')
+        parser.add_argument('--lr-geo', default=1., type=float, help='The learning rate rate of geometry in nvidiffrec')
+        utils.add_bool_option(parser, '--optim-camera-pose', default=False)
+        # utils.add_choose_option(parser, 'scene_type', choices=['synthetic', 'forwardfacing', 'real360'])
+        # utils.add_choose_option(parser, '--color-space', choices=['linear', 'srgb'])
+        # utils.add_bool_option(parser, '--gui', default=False)
+        parser.add_argument('--mesh', default='', help='Generate mesh when given name')
+        parser.add_argument('-R', '--resolution', default=64, type=int, help='march cubes')
+        parser.add_argument('--eval-mesh-interval', default=0, type=int,
+            help='Generate mesh for evalution given interval')
+        utils.add_bool_option(parser, '--mesh-scale', default=False, help='apply scale on mesh')
+
+        parser.add_argument('--vis-interval', default=1_000, type=int)
+        utils.add_cfg_option(parser, '--vis-kwargs', help='The config for visualize')
+        utils.add_bool_option(parser, '--vis-clear', default=None, help='clear visualization')
         parser.add_argument('--num-init-points', default=100_000, type=int)
         utils.add_path_option(parser, '--init-ply', default=None)
         utils.add_bool_option(parser, '--random-pcd', default=False)
         utils.add_bool_option(parser, '--lr-scheduler-in-model', default=True)
         super().extra_config(parser)
+
+    def step_2_environment(self, *args, **kwargs):
+        super().step_2_environment(output_paths=(self.cfg.exp_name, self.cfg.scene))
+        if self.cfg.weighted_sample:
+            self.cfg.num_workers = 0
 
     def step_3_dataset(self, *args, **kwargs):
         super().step_3_dataset(*args, **kwargs)
@@ -35,6 +63,13 @@ class GaussianTrainTask(NeRFTask):
         if not self.cfg.random_pcd and self.cfg.init_ply is not None:
             self.logger.info(f"try to Load init point cloud from: {self.cfg.init_ply}")
             pcd = fetchPly(self.cfg.init_ply)
+        # elif not self.cfg.random_pcd and isinstance(self.train_db, (ColmapDataset, DyNeRFColmapDataset)):
+        #     pcd = self.train_db.point_cloud
+        #     logging.info(f"[red]load point cloud from colmap")
+        # elif not self.cfg.random_pcd and isinstance(self.train_db, NerfiesDataset) and self.train_db.points is not None:
+        #     xyz = self.train_db.points
+        #     shs = np.random.random((len(xyz), 3)) / 255.0
+        #     pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((len(xyz), 3)))
         else:
             # ply_path = self.train_db.root.joinpath("points3d.ply")
             # if 1 or not ply_path.exists():
@@ -62,7 +97,7 @@ class GaussianTrainTask(NeRFTask):
 
     def step_4_model(self, *args, **kwargs):
         self.set_output_dir(self.cfg.exp_name, self.cfg.scene)
-        self.model = networks.make(self.cfg)  # noqa
+        self.model = networks.build.make(self.cfg)  # noqa
         self.model.set_from_dataset(utils.fnn(self.train_db, self.eval_db, self.test_db))
         self.criterion = self.model.loss
 
@@ -72,29 +107,23 @@ class GaussianTrainTask(NeRFTask):
             self.model.create_from_pcd(self._pcd)
             self.logger.info('create_from_pcd')
         self.model.training_setup()
-        if self.mode != 'train':
-            self.model.active_sh_degree = self.model.max_sh_degree
+        # if self.mode != 'train':
+        #     self.model.active_sh_degree = self.model.max_sh_degree
         self.to_cuda()
         # torch.set_anomaly_enabled(True)
         self.logger.info(f"==> Model: {self.model}")
-        storePly(self.output.joinpath('init_points.ply'),
+        storePly(
+            self.output.joinpath('init_points.ply'),
             self.model.points.detach().cpu().numpy(),
-            SH2RGB(self.model._features_dc[:, 0].detach().cpu().numpy()) * 255)
+            SH2RGB(self.model._features_dc[:, 0].detach().cpu().numpy()) * 255
+        )
         self.model._task = self
 
-    def _step_5_data_loader_and_transform(self):
+    def step_5_data_loader_and_transform(self):
         if self.train_db is not None:
-            if getattr(self.train_db, 'num_cameras', 1) > 1 and self.cfg.data_sampler_cfg:
-                batch_sampler = TimeIncrementalBatchSampler(self.train_db,
-                    batch_size=self.cfg.batch_size[0],
-                    length=self.cfg.epochs,
-                    **self.cfg.data_sampler_cfg)
-                self.logger.info(f'use TimeIncrementalBatchSampler: {batch_sampler}')
-            else:
-                batch_sampler = 'iterable'
             if self._m_data_loader is not None:
                 self.train_loader = self._m_data_loader.make(
-                    self.cfg, self.train_db, mode='train', batch_sampler=batch_sampler)
+                    self.cfg, self.train_db, mode='train', batch_sampler='iterable')
             self.logger.info(f'==> Train db: {self.train_db}')
 
         if self.eval_db is not None:
@@ -107,11 +136,66 @@ class GaussianTrainTask(NeRFTask):
                 self.test_loader = self._m_data_loader.make(self.cfg, self.test_db, mode='test', batch_size=1)
             self.logger.info(f'==> Test db: {self.test_db}')
 
+    def step_6_optimizer(self, *args, **kwargs):
+        if self.mode != 'train':
+            return
+        m = utils.get_net(self.model)
+        if hasattr(m, 'get_params'):
+            self.optimizer = ext.optimizer.make(None, self.cfg, m.get_params(self.cfg))
+        else:
+            self.optimizer = ext.optimizer.make(self.model, self.cfg)
+        self.store("optimizer")
+        return
+
     def step_7_lr(self, *args, **kwargs):
         if hasattr(self.model, 'update_learning_rate') and self.cfg.lr_scheduler_in_model:
             self.hook_manager.add_hook(self.model.update_learning_rate, 'before_train_step')
         else:
             super().step_7_lr(*args, **kwargs)
+
+    def step_8_others(self, *args, **kwargs):
+        super().step_8_others(*args, **kwargs)
+        self.hook_manager.add_hook(
+            lambda: ext.trainer.
+            change_with_training_progress(self.model, self.step, self.num_steps, self.epoch, self.num_epochs),
+            'before_train_step'
+        )
+        self.hook_manager.add_hook(
+            lambda: self.logger.info(f"Peak GPU memory {torch.cuda.max_memory_allocated() / 2 ** 30:.3f} GiB"),
+            'after_train'
+        )
+        if self.cfg.vis_clear is not None:
+            clear_vis = self.cfg.vis_clear
+        else:
+            clear_vis = self.mode == 'train' and (not self.cfg.debug and not self.cfg.resume)
+        if clear_vis:
+            utils.dir_create_empty(self.output.joinpath('vis'))
+        else:
+            self.output.joinpath('vis').mkdir(exist_ok=True, parents=True)
+        # self.hook_manager.add_hook(self.visualize, 'after_train_step')
+
+    def run(self):
+        if self.cfg.mesh and hasattr(self.model, 'extract_geometry'):
+            save_path = self.output.joinpath(self.cfg.mesh)
+            assert save_path.suffix in utils.mesh_extensions
+            # Ts = getattr(self.train_db, 'Ts', None) if self.cfg.mesh_scale else None
+            vertices, triangles = self.model.extract_geometry(self.cfg.resolution)
+            self.logger.info(f"Extrace Geometry have {len(vertices)} vertices, {len(triangles)} triangles")
+            utils.save_mesh(save_path, vertices, triangles)
+
+            self.logger.info(f'==> Save mesh (resoution={self.cfg.resolution}) to {save_path}')
+            return
+        self.loss_dict_meter = ext.DictMeter(float2str=utils.float2str)
+        self.losses_meter = ext.AverageMeter()
+        self.psnr_meter = ext.AverageMeter()
+
+        self.progress = ext.utils.Progress(enable=ext.is_main_process())
+        if self.mode == 'train':
+            self.progress.add_task('train', self.num_steps, self.step)
+        if self.mode != 'test' and self.eval_loader is not None:
+            self.progress.add_task('eval', len(self.eval_loader))
+        with self.progress:
+            super().run()
 
     def train_step(self, data):
         inputs, targets, infos = ext.utils.tensor_to(data, device=self.device, non_blocking=True)
@@ -130,7 +214,7 @@ class GaussianTrainTask(NeRFTask):
                     outputs = self.model(**inputs, **self.cfg.train_kwargs, info=infos)
                 if self.cfg.debug:
                     self.logger.debug(f'outputs: {utils.show_shape(outputs)}')
-            loss_dict = self.criterion(inputs, outputs, targets)
+            loss_dict = self.criterion(inputs, outputs, targets, infos)
             if self.cfg.debug:
                 self.logger.debug(f'loss_dict: {loss_dict}')
             # if self.cfg.add_noise_interval[0] > 0:
@@ -145,8 +229,9 @@ class GaussianTrainTask(NeRFTask):
             #     # print(x, y)
             # else:
             #     error_map = None
-            losses = self.execute_backward(loss_dict,
-                between_fun=lambda: self.model.adaptive_control(inputs, outputs, self.optimizer, self.step))
+            losses = self.execute_backward(
+                loss_dict, between_fun=lambda: self.model.adaptive_control(inputs, outputs, self.optimizer, self.step)
+            )
             if utils.check_interval(self.step + 1, self.cfg.vis_interval, self.cfg.epochs):
                 gt = targets['images'][..., :3]
                 gt = gt[0] if gt.ndim == 4 else gt
@@ -205,7 +290,7 @@ class GaussianTrainTask(NeRFTask):
                 outputs = self.model(**inputs, **eval_kwargs, info=infos)
         pred_images = outputs['images'].clamp(0., 1.)
         self.logger.debug(f'outputs: {utils.show_shape(outputs)}')
-        loss_dict = self.criterion(inputs, outputs, targets)
+        loss_dict = self.criterion(inputs, outputs, targets, infos)
         self.logger.debug(f'losses: {loss_dict}')
         self.metric_manager.update('image', pred_images[..., :3], data[1]['images'][..., :3])
         self.metric_manager.update('loss', sum(loss_dict.values()), **loss_dict)
@@ -274,10 +359,8 @@ class GaussianTrainTask(NeRFTask):
             index = np.random.randint(0, len(self.train_db))
         logging.info(f"visualize image {index} as step {self.step}")
         inputs, targets, info = utils.tensor_to(*self.train_db[index], device=self.device, non_blocking=True)
-        inputs = {k: None if v is None else utils.to_tensor(v, device=self.device) for k, v in
-                  inputs.items()}
-        targets = {k: None if v is None else utils.to_tensor(v, device=self.device) for k, v in
-                   targets.items()}
+        inputs = {k: utils.to_tensor(v, device=self.device) for k, v in inputs.items()}
+        targets = {k: utils.to_tensor(v, device=self.device) for k, v in targets.items()}
         self.logger.debug(f'inputs: {utils.show_shape(inputs)}')
         self.logger.debug(f'targets: {utils.show_shape(targets)}')
         self.logger.debug(f'info: {utils.show_shape(info)}')
@@ -333,11 +416,15 @@ class GaussianTrainTask(NeRFTask):
         if 'tree_seg_3d' in outputs:
             for i, pc in enumerate(outputs['tree_seg_3d']):
                 utils.save_point_clouds(
-                    self.output.joinpath(f"vis/tree_seg_3d_{self.step}_{index}_level{i + 1}.ply"), **pc)
+                    self.output.joinpath(f"vis/tree_seg_3d_{self.step}_{index}_level{i + 1}.ply"), **pc
+                )
         if hasattr(self.model, 'extract_geometry'):
             vertices, triangles = self.model.extract_geometry(64)
             self.logger.info(f"Extrace Geometry have {len(vertices)} vertices, {len(triangles)} triangles")
             utils.save_mesh(self.output.joinpath('vis', f'mesh{64}_{self.step}.obj'), vertices, triangles)
+        # if 'depths' in outputs:
+        #     depth_img = utils.depth_colorize(outputs['depths'].squeeze())
+        #     utils.save_image(self.output.joinpath('vis', f"depth_{self.step}_{index}.png"), depth_img)
         self.model.train()
 
     def load_model(self):

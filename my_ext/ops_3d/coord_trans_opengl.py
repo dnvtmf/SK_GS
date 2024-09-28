@@ -29,7 +29,7 @@ y
 Tv2s即相机内参，Tw2v即相机外参
 """
 
-from typing import Tuple, Union, Any, Optional
+from typing import Tuple, Union, Any, Sequence, Optional
 import math
 
 import torch
@@ -114,6 +114,14 @@ def look_at(eye: Tensor, at: Tensor = None, up: Tensor = None, inv=False) -> Ten
         T[..., :3, 3] = -eye
         world2view = R @ T
         return world2view
+
+
+def look_at_get(Tv2w: Tensor):
+    eye = Tv2w[..., :3, 3]
+    right_vec = Tv2w[..., :3, 0]
+    up_vec = Tv2w[..., :3, 1]
+    dir_vec = Tv2w[..., :3, 2]
+    return eye, eye - dir_vec, up_vec  # torch.cross(dir_vec, right_vec, dim=-1)
 
 
 def camera_intrinsics(focal=None, cx_cy=None, size=None, fovy=np.pi, inv=False, **kwargs) -> Tensor:
@@ -218,6 +226,39 @@ def ortho(l=-1., r=1.0, b=-1., t=1.0, n=0.1, f=1000.0, device=None):
     # yapf: enable
 
 
+def point2pixel(
+    points: Tensor, Tw2v: Tensor = None, Tv2s: Tensor = None, Tv2c: Tensor = None, Tw2c: Tensor = None,
+    size: Tuple[int, int] = None
+):
+    """
+    Args:
+        points (Tensor):  containing 3D points with shape [..., 3] or [..., 4]
+        Tw2v (Union[None, Tensor]): world to view space transformation matrix with shape [..., 4, 4]
+        Tv2s (Optional[Tensor]): view to screen space transformation matrix with shape [..., 3, 3]
+        Tv2c (Optional[Tensor]): view to clip space transformation matrix with shape [..., 4, 4]
+        Tw2c (Optional[Tensor]): world to clip space transformation matrix with shape [..., 4, 4]
+        size (Optional[Tuple[int, int]]): (W, H)
+    Returns:
+        (Tensor, Tensor): pixel containing 2D pixel with shape [..., 2] and depth: [...]
+    """
+    if points.shape[-1] == 3:
+        points = torch.cat([points, torch.ones_like(points[..., :1])], dim=-1)  # to homo
+    if Tw2v is not None and Tv2s is not None:
+        points = points @ Tw2v.transpose(-1, -2)
+        points = points[..., :3] @ Tv2s.transpose(-1, -2)
+        pixel = points[..., :2] / points[..., 2:3]
+        return pixel, points[..., 2]
+    else:
+        if Tw2c is None:
+            assert Tw2v is not None and Tv2c is not None
+            Tw2c = Tv2c @ Tw2v
+        ndc = points @ Tw2c.transpose(-1, -2)
+        pixel = torch.zeros_like(ndc[..., :2])
+        pixel[..., 0] = (1 + ndc[..., 0] / ndc[..., 3]) * 0.5 * size[0] - 0.5
+        pixel[..., 1] = (1 - ndc[..., 1] / ndc[..., 3]) * 0.5 * size[1] - 0.5
+        return pixel, ndc[..., 2] / ndc[..., 3]
+
+
 def test():
     from my_ext.utils import set_printoptions
     print()
@@ -232,17 +273,22 @@ def test():
         print(np.rad2deg(t_.item()) - thetas, np.rad2deg(p_.item()) - phis)
 
     eye = torch.randn(3)
-    eye = torch.tensor([1, 0, 1.])
-    print(eye, coord_spherical_to(*coord_to_spherical(eye)))
-    at = torch.tensor([0, 0, 0.])
-    up = torch.tensor([0, -1, 0.])
+    at = torch.randn(3)
+    up = torch.randn(3)
+    # eye = torch.tensor([1, 0, 1.])
+    # at = torch.tensor([0, 0, 0.])
+    # up = torch.tensor([0, -1, 0.])
+    print('coord_spherical_to', eye, coord_spherical_to(*coord_to_spherical(eye)))
     pose = look_at(eye, at, up, True)
-    print(pose @ look_at(eye, at, up))
+    pose2 = look_at(*look_at_get(pose), inv=True)
+    # print(pose @ look_at(eye, at, up))
+    # print(eye, at, up)
+    # print(*look_at_get(pose))
+    print('look_at_get', (pose2 - pose).abs().max())
 
 
 def test_camera_intrinsics():
     import matplotlib.pyplot as plt
-    from my_ext.ops_3d.xfm import point2pixel
     torch.set_printoptions(precision=6, sci_mode=False)
     np.set_printoptions(precision=6, suppress=True)
     print()

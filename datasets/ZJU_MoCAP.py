@@ -60,6 +60,9 @@ class ZJUMoCapDataset(NERF_Base_Dataset):
         self.batch_mode = batch_mode
         self.split = split
         self.mask_dir = mask_dir
+        self.coord_src = ops_3d.coordinate_system[coord_src.lower()]
+        self.coord_dst = ops_3d.coordinate_system[coord_dst.lower()]
+        ops_3d.set_coord_system(self.coord_dst)
 
         root = Path(root).expanduser().joinpath(f"CoreView_{scene}")
         annots = np.load(root.joinpath('annots.npy'), allow_pickle=True).item()
@@ -111,8 +114,7 @@ class ZJUMoCapDataset(NERF_Base_Dataset):
         self.focal = K[:, 0, 0].mean().item()
         self.fovy = ops_3d.focal_to_fov(self.focal, self.image_size[1])
         self.Tw2v = ops_3d.convert_coord_system(self.Tw2v, coord_src, coord_dst, inverse=False)
-        if use_perspective_v2:
-            self.Tv2c = ops_3d.perspective_opencv(self.fovy, self.aspect, n=0.01)
+        self.Tv2c = ops_3d.perspective(self.fovy, self.aspect, n=0.01)
         # self.Tw2v = torch.tensor(Tw2vs).transpose(-1, -2)
         self.complete_transform_matrices()
 
@@ -260,6 +262,9 @@ class ZJU_MoCAP_Dataset_pickled(NERF_Base_Dataset):
         self.with_rays = with_rays
         self.batch_mode = batch_mode
         self.move_center = move_center
+        self.coord_src = ops_3d.coordinate_system[coord_src.lower()]
+        self.coord_dst = ops_3d.coordinate_system[coord_dst.lower()]
+        ops_3d.set_coord_system(self.coord_dst)
 
         self.scene = scene
         self.pickle_path = pickle_path
@@ -352,12 +357,12 @@ class ZJU_MoCAP_Dataset_pickled(NERF_Base_Dataset):
         fovy = ops_3d.focal_to_fov(fy, self.image_size[1])
         self.FoV = torch.stack([fovx, fovy], dim=-1).float()
 
-        self.Tv2w = ops_3d.convert_coord_system(self.Tv2w, coord_src, coord_dst, inverse=True)
-        if use_perspective_v2:
-            self.Tv2c = ops_3d.perspective_v3(self.image_size, fx, fy, cx, cy, n=near, f=far)
+        self.Tv2w = ops_3d.convert_coord_system(self.Tv2w, self.coord_src, self.coord_dst, inverse=True)
+
+        self.Tv2c = ops_3d.perspective(self.image_size, fx, fy, cx, cy, n=near, f=far)
         self.scene_size = 2.6
         self.scene_center = 0  # [-1.3, 1.3]
-        self.complete_transform_matrices(opengl=True, near=near, far=far)
+        self.complete_transform_matrices(near=near, far=far)
 
         self.background_type = background
         self.init_background(self.images)
@@ -460,147 +465,3 @@ class ZJU_MoCAP_Dataset_pickled(NERF_Base_Dataset):
             f"move_view_center=True" if self.move_center else None
         ]
         return super().extra_repr() + s
-
-
-def test():
-    import matplotlib.pyplot as plt
-    db_cfg = NERF_DATASETS['ZJU_MoCap']['common']
-    db_cfg['root'] = Path('~/data').expanduser().joinpath(db_cfg['root'])
-    # db_cfg['background'] = 'random'
-    db_cfg['coord_src'] = 'colmap'
-    db_cfg['coord_dst'] = 'opengl'
-    db = ZJUMoCapDataset(**db_cfg)
-    print(db)
-
-    print(utils.show_shape(db[0]))
-    inputs, targets, infos = db.camera_ray(0)
-    rays_o, rays_d = inputs['rays_o'], inputs['rays_d']
-    print(inputs['time_id'])
-    print(infos['Tw2v'])
-    print(infos['Tw2c'])
-    print(infos['campos'])
-    print(infos['cam_id'])
-
-    plt.subplot(121)
-    plt.imshow(targets['images'][..., :3])
-    plt.subplot(122)
-    inputs, targets, infos = db.camera_ray(1)
-    plt.imshow(targets['images'][..., :3])
-    # plt.subplot(133)
-    # plt.imshow(torch.lerp(inputs['background'], targets['images'][..., :3], targets['images'][..., 3:]))
-    plt.show()
-
-    print(db.Tv2w.shape)
-    Tv2w_ = ops_3d.look_at(torch.tensor([1., 1, 1]), at=torch.zeros(3), inv=True)[None]
-    print(Tv2w_.shape, db.fovy, db.aspect, np.rad2deg(db.fovy))
-    print(db.Tv2w[:, :3, 3])
-    with utils.vis3d:
-        utils.vis3d.add_camera_poses(db.Tv2w, fovy=np.rad2deg(db.fovy), aspect=db.aspect, color=(1, 0, 0), size=0.3)
-        utils.vis3d.add_camera_poses(Tv2w_, fovy=np.rad2deg(db.fovy), aspect=db.aspect, color=(1., 1, 0), size=0.3)
-        utils.vis3d.add_lines(torch.stack([rays_o, rays_d + rays_o], dim=-2)[40::80, 40::80])
-        for i in range(5):
-            inputs, targets, infos = db.camera_ray(i)
-            rays_o, rays_d = inputs['rays_o'].reshape(-1, 3), inputs['rays_d'].reshape(-1, 3)
-            index = torch.randperm(rays_o.shape[0])[:i + 1]
-            print(db.samples[i], index.shape)
-            s = (1 - i / db.num_cameras)
-            utils.vis3d.add_lines(torch.stack([rays_o, rays_d * s + rays_o], dim=-2)[index])
-        # inputs = db.random_ray(None, 512)[0]
-        # rays_o, rays_d = inputs['rays_o'], inputs['rays_d']
-        # utils.vis3d.add_lines(torch.stack([rays_o, rays_d + rays_o], dim=-2), color=(0.1, 0.1, 0.1))
-        # inputs = db.random_ray(1, 10)[0]
-        # rays_o, rays_d = inputs['rays_o'], inputs['rays_d']
-        # utils.vis3d.add_lines(torch.stack([rays_o, rays_d + rays_o], dim=-2), color=(0.3, 0.3, 0.3))
-        utils.vis3d.add_lines(points=[
-            [-1., -1, -1],  # 0
-            [-1., -1., 1],  # 1
-            [-1., 1., -1.],  # 2
-            [-1., 1., 1.],  # 3
-            [1., -1., -1],  # 4
-            [1, -1, 1],  # 5
-            [1, 1, -1],  # 6
-            [1, 1, 1],  # 7
-        ],
-            line_index=[[0, 1], [0, 2], [0, 4], [1, 3], [1, 5], [2, 3], [2, 6], [3, 7], [4, 5], [4, 6], [5, 7], [6, 7]])
-        utils.vis3d.add_lines(points=[[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]],
-            line_index=[[0, 1], [0, 2], [0, 3]],
-            color=np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1.]]))
-
-    # db.batch_mode = False
-    # print('batch_mode=False', utils.show_shape(db[0, 5]))
-    # db.batch_mode = True
-    # print('batch_mode=True', utils.show_shape(db[0, 5]))
-
-
-def test2():
-    import matplotlib.pyplot as plt
-    db_cfg = utils.merge_dict(NERF_DATASETS['ZJU_MoCap_2']['common'], NERF_DATASETS['ZJU_MoCap_2']['test'])
-    db_cfg['root'] = Path('~/data').expanduser().joinpath(db_cfg['root'])
-    db_cfg['background'] = 'random'
-    # db_cfg['coord_src'] = 'colmap'
-    # db_cfg['coord_dst'] = 'opengl'
-    db_cfg['use_perspective_v2'] = True
-    print(db_cfg)
-    db = ZJU_MoCAP_Dataset_pickled(**db_cfg)
-    print(db)
-
-    print(utils.show_shape(db[0]))
-    inputs, targets, infos = db.camera_ray(0)
-    rays_o, rays_d = inputs['rays_o'], inputs['rays_d']
-    print(inputs['time_id'])
-    print(infos['Tw2v'])
-    print(infos['Tw2c'])
-    print(infos['campos'])
-    print(infos['cam_id'])
-
-    plt.subplot(121)
-    plt.imshow(targets['images'][..., :3])
-    plt.subplot(122)
-    inputs, targets, infos = db.camera_ray(1)
-    plt.imshow(targets['images'][..., :3])
-    # plt.subplot(133)
-    # plt.imshow(torch.lerp(inputs['background'], targets['images'][..., :3], targets['images'][..., 3:]))
-    plt.show()
-
-    with utils.vis3d:
-        utils.vis3d.add_camera_poses(db.Tv2w,
-            fovy=np.rad2deg(db.FoV[..., 1].mean().item()),
-            aspect=db.aspect,
-            color=(1, 0, 0),
-            size=0.3)
-        # utils.vis3d.add_lines(torch.stack([rays_o, rays_d + rays_o], dim=-2)[40::80, 40::80])
-        for i in range(5):
-            inputs, targets, infos = db.camera_ray(i)
-            rays_o, rays_d = inputs['rays_o'].reshape(-1, 3), inputs['rays_d'].reshape(-1, 3)
-            index = torch.randperm(rays_o.shape[0])[:i + 1]
-            s = (1 - i / db.num_cameras)
-            utils.vis3d.add_lines(torch.stack([rays_o, rays_d * s + rays_o], dim=-2)[index])
-        # inputs = db.random_ray(None, 512)[0]
-        # rays_o, rays_d = inputs['rays_o'], inputs['rays_d']
-        # utils.vis3d.add_lines(torch.stack([rays_o, rays_d + rays_o], dim=-2), color=(0.1, 0.1, 0.1))
-        # inputs = db.random_ray(1, 10)[0]
-        # rays_o, rays_d = inputs['rays_o'], inputs['rays_d']
-        # utils.vis3d.add_lines(torch.stack([rays_o, rays_d + rays_o], dim=-2), color=(0.3, 0.3, 0.3))
-        utils.vis3d.add_lines(points=[
-            [-1., -1, -1],  # 0
-            [-1., -1., 1],  # 1
-            [-1., 1., -1.],  # 2
-            [-1., 1., 1.],  # 3
-            [1., -1., -1],  # 4
-            [1, -1, 1],  # 5
-            [1, 1, -1],  # 6
-            [1, 1, 1],  # 7
-        ],
-            line_index=[[0, 1], [0, 2], [0, 4], [1, 3], [1, 5], [2, 3], [2, 6], [3, 7], [4, 5], [4, 6], [5, 7], [6, 7]])
-        utils.vis3d.add_lines(points=[[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]],
-            line_index=[[0, 1], [0, 2], [0, 3]],
-            color=np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1.]]))
-
-    # db.batch_mode = False
-    # print('batch_mode=False', utils.show_shape(db[0, 5]))
-    # db.batch_mode = True
-    # print('batch_mode=True', utils.show_shape(db[0, 5]))
-
-
-if __name__ == '__main__':
-    test2()
