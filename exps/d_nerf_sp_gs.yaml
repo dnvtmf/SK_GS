@@ -1,4 +1,4 @@
-exp_name: SK_GS/DNeRF_SC
+exp_name: SK_GS/DNeRF_SP
 arch: SK_GS
 arch_cfg:
     sh_degree: 3
@@ -28,8 +28,8 @@ arch_cfg:
     is_blender: true
     init_sampling_step: 7500
     node_max_num_ratio_during_init: 16
-    LBS_method: weighted_kernel
-    warp_method: LBS_c
+    LBS_method: W
+    warp_method: largest
     # get skeleton
     joint_update_interval: [-1, 20_000, 40_000]
     sk_momentum: 0.9

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+set -e
+ROOT=$(cd $(dirname $0)/..; pwd)
 scenes=(atlas baxter spot cassie iiwa nao pandas)
 gpus=(0 1 2 3 4 5 6 7)
 args=()
@@ -16,8 +18,9 @@ do
         screen -dmS ${gpu_id}
     fi
     screen -S ${gpu_id} -p 0 -X stuff "^M"
+    screen -S ${gpu_id} -p 0 -X stuff "conda activate SK_GS^M"
     screen -S ${gpu_id} -p 0 -X stuff "export CUDA_VISIBLE_DEVICES=${gpus[$i]}^M"
-    screen -S ${gpu_id} -p 0 -X stuff "cd ~/wan_code/NeRF^M"
+    screen -S ${gpu_id} -p 0 -X stuff "cd ${ROOT}^M"
 done
 screen -ls%
 
@@ -27,9 +30,9 @@ do
     echo "use gpu${gpu_id} on scene: ${scenes[i]} "
     screen -S gpu${gpu_id} -p 0 -X stuff "^M"
     screen -S gpu${gpu_id} -p 0 -X stuff \
-      "python3 skeleton_train.py -c exps/sk_gs/wim_512.yaml --scene=${scenes[i]} ${args[*]} ^M"
+      "python3 train.py -c exps/sk_gs/wim_512.yaml --scene=${scenes[i]} ${args[*]} ^M"
     screen -S gpu${gpu_id} -p 0 -X stuff \
-      "python3 sp_gs_test.py -c exps/sk_gs/wim_512.yaml \
+      "python3 test.py -c exps/sk_gs/wim_512.yaml \
         --load results/SK_GS/WIM512/${scenes[i]}/last.pth \
         --scene ${scenes[i]} --load-no-strict ${test_args[*]} ^M"
 done

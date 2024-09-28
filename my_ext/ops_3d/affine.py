@@ -154,6 +154,7 @@ def matrix_to_lie_np(matrix: Tensor):
 def test():
     import pytorch3d.transforms
     from scipy.spatial.transform import Rotation
+    from my_ext import utils
     utils.set_printoptions(6)
     print()
     n = 10

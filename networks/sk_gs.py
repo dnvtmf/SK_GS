@@ -667,7 +667,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         # if self.p2sp is not None:
         #     self.p2sp = self.p2sp.new_zeros(N)
         for key in ['joint_parents', 'joint_root', 'global_tr', 'joint_pos', 'joint_cost', 'joint_depth', 'sk_cache',
-                    'sp_cache', 'sp_weights', 'sp_knn', 'p2sp', 'sp_hyper_feature']:
+                    'sp_cache', 'sp_weights', 'sp_knn', 'p2sp', 'sp_hyper_feature', 'train_db_times']:
             if key in state_dict:
                 if isinstance(getattr(self, key), nn.Parameter):
                     setattr(self, key, nn.Parameter(state_dict[key]))

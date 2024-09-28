@@ -17,6 +17,7 @@ class SuperpointGaussianTestTask(GaussianTrainTask):
         utils.add_cfg_option(parser, '--lpips-vgg', default=False)
         utils.add_cfg_option(parser, '--ssim', default=True)
         utils.add_cfg_option(parser, '--ms-ssim', default=True)
+        utils.add_cfg_option(parser, '--stage', default=None)
         parser.set_defaults(test=True)
 
     def step_2_environment(self, *args, **kwargs):
@@ -49,7 +50,7 @@ class SuperpointGaussianTestTask(GaussianTrainTask):
         db: DynamceSceneDataset
         times = db.times.cuda()
         Tw2v = db.Tw2v.cuda()
-        Tw2c = db.Tv2c.cuda() @ Tw2v
+        Tv2c = db.Tv2c.cuda().expand_as(Tw2v)
         campos = db.Tv2w[:, :3, 3].cuda()
         background = torch.zeros((1, 1, 3)).cuda() if db.background_type != 'white' else torch.ones((1, 1, 3)).cuda()
         start_time = torch.cuda.Event(enable_timing=True)
@@ -61,13 +62,17 @@ class SuperpointGaussianTestTask(GaussianTrainTask):
                 cid = db.camera_ids[i].item()
             else:
                 cid = i
-            outputs = self.model.render(info={
-                'Tw2v': Tw2v[cid],
-                'Tw2c': Tw2c[cid],
-                'campos': campos[cid],
-                'size': db.image_size,
-                'FoV': db.FoV[cid] if db.FoV.ndim == 2 else db.FoV,
-            }, t=times[i], background=background)
+            outputs = self.model.render(
+                info={
+                    'Tw2v': Tw2v[cid],
+                    'Tv2c': Tv2c[cid],
+                    'campos': campos[cid],
+                    'size': db.image_size,
+                    'FoV': db.FoV[cid] if db.FoV.ndim == 2 else db.FoV,
+                },
+                t=times[i], background=background,
+                **utils.merge_dict(self.cfg.test_kwargs, stage=self.cfg.stage)
+            )
             save_images.append(outputs['images'].clamp(0, 1))
             if 'images_c' in outputs:
                 save_images_c.append(outputs['images_c'])
@@ -98,13 +103,18 @@ class SuperpointGaussianTestTask(GaussianTrainTask):
             start_time.synchronize()
             start_time.record()
             for i in tqdm(range(1000)):
-                outputs = self.model.render(info={
-                    'Tw2v': Tw2v[0],
-                    'Tw2c': Tw2c[0],
-                    'campos': campos[0],
-                    'size': db.image_size,
-                    'FoV': db.FoV[0] if db.FoV.ndim == 2 else db.FoV,
-                }, t=times.new_tensor([i / 1000]), background=background)
+                outputs = self.model.render(
+                    info={
+                        'Tw2v': Tw2v[0],
+                        'Tv2c': Tv2c[0],
+                        'campos': campos[0],
+                        'size': db.image_size,
+                        'FoV': db.FoV[0] if db.FoV.ndim == 2 else db.FoV,
+                    },
+                    t=times.new_tensor([i / 1000]),
+                    background=background,
+                    **utils.merge_dict(self.cfg.test_kwargs, stage=self.cfg.stage, ),
+                )
                 save_images.append(outputs['images'])
             end_time.record()
             end_time.synchronize()

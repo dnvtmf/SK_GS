@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+set -e
+ROOT=$(cd $(dirname $0)/..; pwd)
 scenes=(hellwarrior hook jumpingjacks mutant standup trex) # bouncingballs lego
 gpus=(0 1 2 3 4 5 6 7)
 args=()
@@ -16,8 +18,9 @@ do
         screen -dmS ${gpu_id}
     fi
     screen -S ${gpu_id} -p 0 -X stuff "^M"
+    screen -S ${gpu_id} -p 0 -X stuff "conda activate SK_GS^M"
     screen -S ${gpu_id} -p 0 -X stuff "export CUDA_VISIBLE_DEVICES=${gpus[$i]}^M"
-    screen -S ${gpu_id} -p 0 -X stuff "cd ~/wan_code/NeRF^M"
+    screen -S ${gpu_id} -p 0 -X stuff "cd ${ROOT}^M"
 done
 screen -ls%
 

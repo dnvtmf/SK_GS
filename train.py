@@ -106,17 +106,17 @@ class GaussianTrainTask(ext.IterableFramework):
         if not self.cfg.load and not self.cfg.resume:
             self.model.create_from_pcd(self._pcd)
             self.logger.info('create_from_pcd')
+            storePly(
+                self.output.joinpath('init_points.ply'),
+                self.model.points.detach().cpu().numpy(),
+                SH2RGB(self.model._features_dc[:, 0].detach().cpu().numpy()) * 255
+            )
         self.model.training_setup()
         # if self.mode != 'train':
         #     self.model.active_sh_degree = self.model.max_sh_degree
         self.to_cuda()
         # torch.set_anomaly_enabled(True)
         self.logger.info(f"==> Model: {self.model}")
-        storePly(
-            self.output.joinpath('init_points.ply'),
-            self.model.points.detach().cpu().numpy(),
-            SH2RGB(self.model._features_dc[:, 0].detach().cpu().numpy()) * 255
-        )
         self.model._task = self
 
     def step_5_data_loader_and_transform(self):
