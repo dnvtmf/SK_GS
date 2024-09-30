@@ -1,4 +1,4 @@
-exp_name: SK_GS/WIM
+exp_name: WIM
 arch: SK_GS
 arch_cfg:
     sh_degree: 3

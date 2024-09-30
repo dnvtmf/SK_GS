@@ -32,17 +32,6 @@ class GaussianTrainTask(ext.IterableFramework):
         utils.add_cfg_option(parser, '--test-kwargs', help='extra test kwargs')
         utils.add_bool_option(parser, '--save-video', default=True, help='Save the test results to vedio')
         parser.add_argument('--eval-num-steps', default=-1, type=int, help='The steps when evaluate during training')
-        parser.add_argument('--lr-geo', default=1., type=float, help='The learning rate rate of geometry in nvidiffrec')
-        utils.add_bool_option(parser, '--optim-camera-pose', default=False)
-        # utils.add_choose_option(parser, 'scene_type', choices=['synthetic', 'forwardfacing', 'real360'])
-        # utils.add_choose_option(parser, '--color-space', choices=['linear', 'srgb'])
-        # utils.add_bool_option(parser, '--gui', default=False)
-        parser.add_argument('--mesh', default='', help='Generate mesh when given name')
-        parser.add_argument('-R', '--resolution', default=64, type=int, help='march cubes')
-        parser.add_argument('--eval-mesh-interval', default=0, type=int,
-            help='Generate mesh for evalution given interval')
-        utils.add_bool_option(parser, '--mesh-scale', default=False, help='apply scale on mesh')
-
         parser.add_argument('--vis-interval', default=1_000, type=int)
         utils.add_cfg_option(parser, '--vis-kwargs', help='The config for visualize')
         utils.add_bool_option(parser, '--vis-clear', default=None, help='clear visualization')
@@ -175,16 +164,6 @@ class GaussianTrainTask(ext.IterableFramework):
         # self.hook_manager.add_hook(self.visualize, 'after_train_step')
 
     def run(self):
-        if self.cfg.mesh and hasattr(self.model, 'extract_geometry'):
-            save_path = self.output.joinpath(self.cfg.mesh)
-            assert save_path.suffix in utils.mesh_extensions
-            # Ts = getattr(self.train_db, 'Ts', None) if self.cfg.mesh_scale else None
-            vertices, triangles = self.model.extract_geometry(self.cfg.resolution)
-            self.logger.info(f"Extrace Geometry have {len(vertices)} vertices, {len(triangles)} triangles")
-            utils.save_mesh(save_path, vertices, triangles)
-
-            self.logger.info(f'==> Save mesh (resoution={self.cfg.resolution}) to {save_path}')
-            return
         self.loss_dict_meter = ext.DictMeter(float2str=utils.float2str)
         self.losses_meter = ext.AverageMeter()
         self.psnr_meter = ext.AverageMeter()
@@ -337,9 +316,9 @@ class GaussianTrainTask(ext.IterableFramework):
         else:
             R_error, t_error = None, None
         self.logger.info("Eval [%d/%d]: %s%s", self.step, self.num_steps, self.metric_manager.str(),
-            f", R_err={utils.float2str(R_error.item())}°, t_err={utils.float2str(t_error.item())},"
-            if self.cfg.optim_camera_pose else ''
-        )
+                         f", R_err={utils.float2str(R_error.item())}°, t_err={utils.float2str(t_error.item())},"
+                         if self.cfg.optim_camera_pose else ''
+                         )
         if self.mode == 'train':
             if self.metric_manager.is_best:
                 self.save_model('best.pth')

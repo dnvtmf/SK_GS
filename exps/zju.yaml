@@ -1,4 +1,4 @@
-exp_name: SK_GS/ZJU
+exp_name: ZJU
 __base__: 'default.yaml'
 arch_cfg:
     loss_cfg:

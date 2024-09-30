@@ -1,0 +1,6 @@
+exp_name: warp
+log_suffix: W_LBS
+__base__: '../d_nerf.yaml'
+arch_cfg:
+    LBS_method: W
+    warp_method: LBS

@@ -1,5 +1,5 @@
-exp_name: SK_GS/DNeRF
-arch: SkeletonGS
+exp_name: DNeRF
+arch: SK_GS
 arch_cfg:
     sh_degree: 3
     net_cfg:
@@ -136,18 +136,17 @@ eval_interval: 5_000
 metric: image/PSNR
 metrics: [image, loss]
 metric_goal: max
-
-vis_interval: 1000
-checkpoint_interval: 1000
-checkpoint_save:
-    7000: sampling
-    9900: sp_init
-    15000: '15000'
-    25000: '25000'
-    35000: '35000'
-    45000: '45000'
-    55000: '55000'
-    #    10000: gs_end_pc
-    20000: sp_end_pc
-    30000: guided
-    40000: sk_start_pc
+vis_interval: 5000
+checkpoint_interval: 5000
+#checkpoint_save:
+#    7000: sampling
+#    9900: sp_init
+#    15000: '15000'
+#    25000: '25000'
+#    35000: '35000'
+#    45000: '45000'
+#    55000: '55000'
+#    #    10000: gs_end_pc
+#    20000: sp_end_pc
+#    30000: guided
+#    40000: sk_start_pc

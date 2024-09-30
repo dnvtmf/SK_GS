@@ -41,6 +41,7 @@ class MetricManager(Metric):
 
     def reset(self):
         self.is_best = False
+        self.best_score = None
         for name, metric in self.metrics.items():
             metric.reset()
 

@@ -1,0 +1,6 @@
+exp_name: warp
+log_suffix: RBF_LBS
+__base__: '../d_nerf.yaml'
+arch_cfg:
+    LBS_method: kernel
+    warp_method: LBS

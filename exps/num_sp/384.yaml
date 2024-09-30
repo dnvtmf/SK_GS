@@ -1,5 +1,5 @@
 __base__: ../d_nerf.yaml
-exp_name: SK_GS/num_sp
+exp_name: num_sp
 log_suffix: 384
 arch_cfg:
     num_superpoints: 384

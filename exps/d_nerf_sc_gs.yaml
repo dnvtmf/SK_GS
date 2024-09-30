@@ -1,4 +1,4 @@
-exp_name: SK_GS/DNeRF_SC
+exp_name: DNeRF_SC
 arch: SK_GS
 arch_cfg:
     sh_degree: 3

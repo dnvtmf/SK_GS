@@ -7,7 +7,7 @@ from rich.table import Table
 import argparse
 
 parser = argparse.ArgumentParser()
-parser.add_argument('input', default='.', type=str)
+parser.add_argument('-i', '--input', default='./results', type=str)
 args = parser.parse_args()
 
 console = Console()
