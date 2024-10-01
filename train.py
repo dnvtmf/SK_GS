@@ -311,14 +311,7 @@ class GaussianTrainTask(ext.IterableFramework):
             if self.cfg.debug:
                 break
         self.hook_manager.after_eval_epoch()
-        if self.cfg.optim_camera_pose:
-            R_error, t_error = ops_3d.camera_poses_error(*self.model.get_poses())
-        else:
-            R_error, t_error = None, None
-        self.logger.info("Eval [%d/%d]: %s%s", self.step, self.num_steps, self.metric_manager.str(),
-                         f", R_err={utils.float2str(R_error.item())}°, t_err={utils.float2str(t_error.item())},"
-                         if self.cfg.optim_camera_pose else ''
-                         )
+        self.logger.info(f"Eval [{self.step}/{self.num_steps}]: {self.metric_manager.average}")
         if self.mode == 'train':
             if self.metric_manager.is_best:
                 self.save_model('best.pth')
@@ -359,51 +352,11 @@ class GaussianTrainTask(ext.IterableFramework):
             if img_pred.ndim == 4:
                 assert img_pred.shape[0] == 1
                 img_pred = img_pred[0]
-            # if img_pred.ndim == 3:
             image_list = [img_pred, img_gt, (img_pred - img_gt).abs()]
             if images_c is not None:
                 image_list.append(images_c[0, ..., :3].cpu())
             image = torch.cat(image_list, dim=cat_dim)
-            # else:
-            #     W, H = self.train_db.image_size
-            #     image = torch.ones((H * 2, W, 3)) if cat_dim == 0 else torch.ones((H, W * 2, 3))
-            #     points = ops_3d.xfm(ops_3d.xfm(inputs['rays_o'] + inputs['rays_d'], info['Tw2v'].cpu()),
-            #         info['Tv2s'].cpu())
-            #     points = (points[..., :2] / points[..., 2:3]).int()
-            #     image[points[:, 1], points[:, 0], :] = img_pred
-            #     H, W = (H, 0) if cat_dim == 0 else (0, W)
-            #     image[points[:, 1] + H, points[:, 0] + W, :] = img_gt
             utils.save_image(self.output.joinpath('vis', f"img_{self.step}_{index}.png"), image)
-        if 'segmentations' in outputs and 'masks' in targets:
-            mask_images = []
-            gt_masks = targets['masks']
-            my_masks = outputs['segmentations']
-            if gt_masks.dtype == torch.bool:
-                gt_masks = gt_masks * 2 ** torch.arange(len(gt_masks), device=gt_masks.device)[:, None, None]
-                gt_masks = torch.sum(gt_masks, dim=0, keepdim=True)
-                gt_masks = torch.unique(gt_masks, return_inverse=True)[1]
-            for level in range(max(gt_masks.shape[0], my_masks.shape[0])):
-                gt_mask = torch.zeros_like(gt_masks[0]) if level >= gt_masks.shape[0] else gt_masks[level]
-                my_mask = torch.zeros_like(my_masks[0]) if level >= my_masks.shape[0] else my_masks[level]
-                if gt_mask.any() or my_mask.any():
-                    gt_mask = utils.color_labels(gt_mask.cpu().numpy(), special=0, special_color=(1., 1., 1.))
-                    my_mask = utils.color_labels(my_mask.cpu().numpy(), special=0, special_color=(1., 1., 1.))
-                    mask_images.append(np.concatenate([gt_mask, my_mask], axis=1))
-            if len(mask_images) > 0:
-                mask_images = np.concatenate(mask_images, axis=0)
-                utils.save_image(self.output.joinpath(f'vis/tree_seg_{self.step}_{index}.png'), mask_images)
-        if 'tree_seg_3d' in outputs:
-            for i, pc in enumerate(outputs['tree_seg_3d']):
-                utils.save_point_clouds(
-                    self.output.joinpath(f"vis/tree_seg_3d_{self.step}_{index}_level{i + 1}.ply"), **pc
-                )
-        if hasattr(self.model, 'extract_geometry'):
-            vertices, triangles = self.model.extract_geometry(64)
-            self.logger.info(f"Extrace Geometry have {len(vertices)} vertices, {len(triangles)} triangles")
-            utils.save_mesh(self.output.joinpath('vis', f'mesh{64}_{self.step}.obj'), vertices, triangles)
-        # if 'depths' in outputs:
-        #     depth_img = utils.depth_colorize(outputs['depths'].squeeze())
-        #     utils.save_image(self.output.joinpath('vis', f"depth_{self.step}_{index}.png"), depth_img)
         self.model.train()
 
     def load_model(self):

@@ -11,7 +11,7 @@ from torch import Tensor
 from .image_viewer import ImageViewer
 from ..lazy_import import LazyImport
 
-ops_3d = LazyImport('ops_3d', globals(), 'extension.ops_3d')
+ops_3d = LazyImport('ops_3d', globals(), 'my_ext.ops_3d')
 
 
 class Viewer3D(ImageViewer):
@@ -246,46 +246,3 @@ def simple_3d_viewer(rendering, size=(400, 400)):
             last_size = now_size
         dpg.set_value('fps', f"FPS: {dpg.get_frame_rate()}")
     dpg.destroy_context()
-
-
-def test():
-    import torch
-    import nvdiffrast.torch as dr
-    from my_ext import ops_3d, Mesh
-    mesh_path = Path('~/data/meshes/spot/spot.obj').expanduser()
-    mesh = Mesh.load(mesh_path)
-    mesh = mesh.unit_size()
-    mesh = mesh.cuda()
-    print(mesh)
-
-    glctx = dr.RasterizeCudaContext()
-    lgt = ops_3d.normalize(torch.randn(3).cuda())
-
-    @torch.no_grad()
-    def rendering(Tw2v, fovy, size):
-        Tv2c = ops_3d.perspective(size=size, fovy=fovy).cuda()
-        Tw2c = Tv2c @ Tw2v.to(Tv2c.device)
-        pos = ops_3d.xfm(mesh.v_pos, Tw2c, homo=True)[None].contiguous()
-        assert pos.ndim == 3
-        tri = mesh.f_pos.int()
-        resolution = min(2048, size[0] // 8 * 8), min(2048, size[1] // 8 * 8)
-        rast, _ = dr.rasterize(glctx, pos, tri, resolution=resolution)
-        nrm, _ = dr.interpolate(mesh.v_nrm, rast, tri)
-        nrm = ops_3d.normalize(nrm)
-        if mesh.v_tex is not None:
-            uv, _ = dr.interpolate(mesh.v_tex[None], rast, mesh.f_tex.int())
-            ka = dr.texture(mesh.material['ka'].data[..., :3].contiguous(), uv) if 'ka' in mesh.material else None
-            kd = dr.texture(mesh.material['kd'].data[..., :3].contiguous(), uv) if 'kd' in mesh.material else None
-            ks = dr.texture(mesh.material['ks'].data, uv) if 'ks' in mesh.material else None
-        else:
-            ka, kd, ks = None, None, None
-        if kd is None:
-            kd = nrm.new_ones((*nrm.shape[:-1], 3))
-        if ks is None:
-            ks = nrm.new_zeros((*nrm.shape[:-1], 3))
-        # img = ops_3d.HalfLambert(nrm, lgt, None, (ka, kd, ks))
-        img = ops_3d.Blinn_Phong(nrm, lgt, ops_3d.normalize(Tv2c[..., 3, :3]), (ka, kd, ks))
-        img = dr.antialias(img, rast, pos, tri)
-        return img
-
-    simple_3d_viewer(rendering)

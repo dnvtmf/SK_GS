@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from torch import nn, Tensor
 from pytorch3d.ops import knn_points
 
-import my_ext as ext
+import my_ext
 from my_ext.ops.point_sample import FurthestSampling
 from networks.encoders import POSITION_ENCODERS
 from networks.gaussian_splatting import GaussianSplatting, NETWORKS, get_expon_lr_func, BasicPointCloud
@@ -103,7 +103,7 @@ def find_root(father: Tensor):
 
 
 @torch.no_grad()
-@ext.try_use_C_extension
+@my_ext.try_use_C_extension
 def joint_discovery(joint_cost: Tensor):
     M = joint_cost.shape[0]
     connectivity = torch.eye(M, device=joint_cost.device, dtype=torch.long)  # (n_parts, n_parts)
@@ -203,32 +203,6 @@ def skeleton_warp_SE3(local_T: SE3, global_T: Optional[SE3], parents: Tensor, ro
     if len(global_T.shape) == 0:
         global_T = global_T[None]
     return global_T * out
-
-
-class SkeletonDeformationNetwork(nn.Module):
-    def __init__(
-        self,
-        out_channels,
-        width=256,
-        depth=8,
-        skips=(4,),
-        pos_enc_t='freq',
-        pos_enc_t_cfg: dict = None
-    ):
-        super().__init__()
-        self.pos_enc_t = POSITION_ENCODERS[pos_enc_t](**utils.merge_dict(pos_enc_t_cfg, input_dim=1))
-        self.dynamic_net = MLP_with_skips(
-            in_channels=self.pos_enc_t.output_dim,
-            dim_hidden=width,
-            out_channels=out_channels,
-            num_layers=depth,
-            skips=skips,
-        )
-
-    def forward(self, t: Tensor):
-        t_embed = self.pos_enc_t(t.view(-1, 1))
-        out = self.dynamic_net(t_embed)
-        return out
 
 
 class DeformNetwork(nn.Module):
@@ -946,7 +920,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         sp_points = self.sp_points
         sp_delta_tr = self.sp_cache[..., :7]
         optimizer = torch.optim.Adam([self.joint_pos], lr=1.0e-3)
-        loss_meter = ext.DictMeter(float2str=utils.float2str)
+        loss_meter = my_ext.DictMeter(float2str=utils.float2str)
         with torch.enable_grad():
             for i in range(self.joint_init_steps):
                 tid = random.randrange(self.num_frames)
@@ -985,7 +959,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         state = self.training
         self.train()
         points_c = self.points.detach()
-        loss_meter = ext.DictMeter(float2str=ext.utils.str_utils.float2str)
+        loss_meter = my_ext.DictMeter(float2str=my_ext.utils.str_utils.float2str)
         for step in range(self.joint_init_steps):
             tid = random.randrange(self.num_frames)
             t = self.train_db_times[tid]
@@ -1251,7 +1225,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
                 d_xyz, d_rotation, d_scaing, skT, sk_d_rot, sk_d_scale, g_tr, knn_w, knn_i = self.sk_stage(
                     points, t, time_id=time_id, detach=stage == 'sk_fix', **kwargs)
             outputs.update(_skT=skT, _knn_w=knn_w, _knn_i=knn_i, _sk_rot=sk_d_rot, _sk_scale=sk_d_scale,
-                _d_xyz=d_xyz, _d_rot=d_rotation, _d_scale=d_scaing)
+                           _d_xyz=d_xyz, _d_rot=d_rotation, _d_scale=d_scaing)
         outputs['points'] = points + d_xyz
         if self.convert_SHs_python and campos is not None:
             outputs['colors'] = self.get_colors(sh_features, points, campos)
@@ -1469,7 +1443,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
 
         # Calculate weights of nodes NN
         nn_weight, nn_idx = self.calc_LBS_weight(self.sp_points, self.sp_points, self.sp_hyper_feature,
-            self.sp_hyper_feature, K=K + 1)
+                                                 self.sp_hyper_feature, K=K + 1)
         nn_weight, nn_idx = nn_weight[:, 1:], nn_idx[:, 1:]  # M, K
 
         # Calculate edge deform loss
@@ -1847,7 +1821,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
 
         # Picking pts to densify
         selected_pts_mask = torch.logical_and(node_avg_xgradnorm > max_grad,
-            node_avg_x.isnan().logical_not().all(dim=-1))
+                                              node_avg_x.isnan().logical_not().all(dim=-1))
 
         pruned_pts_mask = node_edge_count.eq(0)
         if selected_pts_mask.sum() > 0 or pruned_pts_mask.sum() > 0:
@@ -1908,7 +1882,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
             self.to(self.sp_points.device)
             new_params = {v: getattr(self, k) for k, v in self.param_names_map.items()}
             if self.sp_W is not None:
-                _, p2sp = ext.cdist_top(self.points, self.joints)
+                _, p2sp = my_ext.cdist_top(self.points, self.joints)
                 scale = math.log(9 * (self.num_knn - 1))
                 new_params['sp_W'] = F.one_hot(p2sp, self.num_superpoints).float() * scale  # [0.9, 0.1/(K-1), ...]
             new_params = self.change_optimizer(self._task.optimizer, new_params, op='replace')
@@ -1924,7 +1898,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
             M = self.joints.shape[0]
             scene_range = self.points.max() - self.points.min()
             if self.sp_W is not None:
-                _, p2sp = ext.cdist_top(self.points, self.joints)
+                _, p2sp = my_ext.cdist_top(self.points, self.joints)
                 scale = math.log(9 * (self.num_knn - 1))
                 new_params['sp_W'] = F.one_hot(p2sp, M).float() * scale  # [0.9, 0.1/(K-1), ...]
             if self._sp_radius is not None:
@@ -1968,9 +1942,9 @@ class SkeletonGaussianSplatting(GaussianSplatting):
                     else:
                         grad_max = self.adaptive_control_cfg['densify_grad_threshold']
                 self.densify(optimizer, grad_max, self.cameras_extent,
-                    self.adaptive_control_cfg['densify_percent_dense'])
+                             self.adaptive_control_cfg['densify_percent_dense'])
                 self.prune(optimizer, self.adaptive_control_cfg['prune_opacity_threshold'],
-                    self.cameras_extent, size_threshold, self.adaptive_control_cfg['prune_percent_dense'])
+                           self.cameras_extent, size_threshold, self.adaptive_control_cfg['prune_percent_dense'])
                 logging.info(f'Node after densify and prune, there are {len(self.points)} points at step {step}')
             if (step >= 100 and (step - 1) % self.adaptive_control_cfg['opacity_reset_interval'][0] == 0) or \
                 (self.background_type == 'white' and step == self.adaptive_control_cfg['densify_interval'][1]):

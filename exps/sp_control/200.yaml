@@ -1,0 +1,6 @@
+log_suffix: '200'
+__base__: '_base.yaml'
+arch_cfg:
+    adaptive_control_cfg:
+        sp_adjust_interval: [200, 10_000, 20_000]
+        sp_merge_interval: [200, 20_000, 30_000]

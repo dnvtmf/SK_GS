@@ -12,23 +12,27 @@ from my_ext.utils import str2dict, eval_str, add_bool_option
 from my_ext.optimizer import OPTIMIZERS
 from my_ext.utils.torch_utils import get_net
 from .SAM import SAM
+from rich.console import Console
+from rich.text import Text
+from rich.table import Table
+from rich.padding import Padding
 
 
 def options(parser=None):
     group = get_parser(parser).add_argument_group("Optimizer Options:")
     group.add_argument("-oo", "--optimizer", default="sgd", choices=OPTIMIZERS.keys(), metavar='C',
-        help="the optimizer method to train network {" + ", ".join(OPTIMIZERS.keys()) + "}")
+                       help="the optimizer method to train network {" + ", ".join(OPTIMIZERS.keys()) + "}")
     group.add_argument("-oc", "--optimizer-cfg", default={}, type=str2dict, metavar="D",
-        help="The configure for optimizer")
+                       help="The configure for optimizer")
     group.add_argument("-wd", "--weight-decay", default=0, type=float, metavar="V",
-        help="weight decay (default: 0.).")
+                       help="weight decay (default: 0.).")
     add_bool_option(group, "--no-wd-bias", default=False, help="Set the weight decay on bias and bn to 0")
     group.add_argument('--optimizer-groups', default=None, type=eval_str, metavar='D',
-        help='将模型参数划分为不同组并使用不同的参数, 当lr=0时, 参数不更新, 当lr<0时, 参数不更新且BN被冻结'
-             '格式: {"backbone.*": {lr: 0, weight_decay: 0}, ...} "backbone.*"表示正则表达式')
+                       help='将模型参数划分为不同组并使用不同的参数, 当lr=0时, 参数不更新, 当lr<0时, 参数不更新且BN被冻结'
+                            '格式: {"backbone.*": {lr: 0, weight_decay: 0}, ...} "backbone.*"表示正则表达式')
     add_bool_option(group, "--optimizer-sam", default=False, help='Use SAM optimizer')
     group.add_argument('--optimizer-sam-cfg', default={}, type=str2dict, metavar='D',
-        help="The configure SAM optimizer, default: {rho=0.05, adaptive}")
+                       help="The configure SAM optimizer, default: {rho=0.05, adaptive}")
     return
 
 
@@ -96,7 +100,8 @@ def make(model: Optional[torch.nn.Module], cfg: argparse.Namespace, params=None,
                         break
             for (re_s, _cfg), group in zip(cfg.optimizer_groups.items(), params):
                 logging.info('Pattern "{}" have {} parameters: {}'.format(re_s,
-                    len(group["params"]), ', '.join(f"{k}={v}" for k, v in _cfg.items())))
+                                                                          len(group["params"]), ', '.join(
+                        f"{k}={v}" for k, v in _cfg.items())))
             if len(params[-1]['params']):
                 logging.info(f"Pattern \".*\"  have {len(params[-1]['params'])} parameters.")
             # clean param:
@@ -112,8 +117,36 @@ def make(model: Optional[torch.nn.Module], cfg: argparse.Namespace, params=None,
     optimizer = OPTIMIZERS[kwargs.pop('optimizer') if 'optimizer' in kwargs else cfg.optimizer]
     kwargs = {k: v for k, v in kwargs.items() if k in optimizer.__init__.__code__.co_varnames}  # 去掉多余参数
     optimizer = optimizer(params, **kwargs)
-    logging.info("==> Optimizer {}".format(optimizer))
+    log_optimizer(optimizer)
     if cfg.optimizer_sam:
         return SAM(optimizer, **cfg.optimizer_sam_cfg)
     else:
         return optimizer
+
+
+def log_optimizer(optimizer: torch.optim.Optimizer):
+    logging.info(f"==> Optimizer: {optimizer.__class__.__name__}[{len(optimizer.param_groups)} groups](")
+    opt_keys = set()
+    for group in optimizer.param_groups:
+        opt_keys.update(group.keys())
+    table_keys = []
+    for key in sorted(opt_keys):
+        if key == 'params':
+            continue
+        values = [group.get(key, '') for group in optimizer.param_groups]
+        all_same = all(values[i] == values[0] for i in range(1, len(values)))
+        if all_same:
+            logging.info(f'  {key}: {values[0]}')
+        else:
+            table_keys.append(key)
+    if len(table_keys) > 0:
+        table = Table(padding=(0, 0))
+        for key in table_keys:
+            table.add_column(key)
+        for group in optimizer.param_groups:
+            table.add_row(*[str(group.get(key, '')) for key in table_keys])
+        console = Console()
+        with console.capture() as capture:
+            console.print(Padding.indent(table, 2))
+        logging.info(f"{Text.from_ansi(capture.get())}")
+        logging.info(")\n")

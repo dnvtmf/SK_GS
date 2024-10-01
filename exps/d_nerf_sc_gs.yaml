@@ -89,6 +89,7 @@ arch_cfg:
             _values: [0, 1.0e-3, 0]
             _steps: [0, 10000, 10000]
             _vary: fix
+    which_rotation: 'quaternion'
 ## dataset
 scene: jumpingjacks
 dataset: DNeRF
@@ -122,3 +123,4 @@ metric_goal: max
 vis_interval: 5000
 checkpoint_interval: 5000
 test_kwargs: {stage: 'sp'}
+eval_kwargs: {stage: 'sp'}

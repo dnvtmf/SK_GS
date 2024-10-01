@@ -33,8 +33,8 @@ arch_cfg:
     is_blender: true
     init_sampling_step: 7500
     node_max_num_ratio_during_init: 16
-    LBS_method: weighted_kernel
-    warp_method: LBS_c # LBS_c, LBS, largest
+    LBS_method: W # 'W', 'dist', 'kernel', 'weighted_kernel'
+    warp_method: largest # LBS_c, LBS, largest
     # get skeleton
     joint_update_interval: [1_000, 20_000, 40_000]
     sk_momentum: 0.9
@@ -73,8 +73,8 @@ arch_cfg:
         prune_max_screen_size: 20
         prune_percent_dense: 0.1
 
-        sp_adjust_interval: [-1, 10_000, 20_000]
-        sp_merge_interval: [-1, 20_000, 30_000]
+        sp_adjust_interval: [200, 10_000, 20_000]
+        sp_merge_interval: [200, 20_000, 30_000]
     loss_cfg:
         default: 0.0
         image: {method: l1, lambda: 0.8}

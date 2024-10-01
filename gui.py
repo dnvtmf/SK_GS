@@ -8,13 +8,14 @@ import torch
 from torch import Tensor
 import cv2
 
-import my_ext as ext
-import datasets
-from networks import options, make
-from networks.sp_skeleton import SuperpointSkeletonGaussianSplatting
+import my_ext
 from my_ext import ops_3d, utils
-from my_ext.ops_3d.lietorch import SE3
 from my_ext.utils.gui import Viewer3D
+import datasets
+from lietorch import SE3
+from networks import options, make
+from networks.sk_gs import SkeletonGaussianSplatting
+from networks.renderer.gaussian_render_origin import render_gs_offical
 
 D_NERF_SCENES = ['bouncingballs', 'hellwarrior', 'hook', 'jumpingjacks', 'lego', 'mutant', 'standup', 'trex']
 ZJU_SCENES = ['366', '377', '381', '384', '387']
@@ -23,10 +24,10 @@ WIM_SCENES = ['atlas', 'baxter', 'cassie', 'iiwa', 'nao', 'pandas', 'spot']
 
 # noinspection PyArgumentList
 class SP_GS_GUI:
-    net: SuperpointSkeletonGaussianSplatting
+    net: SkeletonGaussianSplatting
 
     def __init__(self):
-        ext.my_logger.basic_config()
+        my_ext.my_logger.basic_config()
         self.net, self.db, init_stage = self.build_dataset_and_net()
         # self.image_index = 0
         self.camera_index = 0
@@ -34,7 +35,6 @@ class SP_GS_GUI:
         self.sp_colors = None
         if hasattr(self.net, 'num_superpoints'):
             self.sp_colors = utils.get_colors(self.net.num_superpoints).cuda().float()
-        from NeRF.networks.renderer.gaussian_render_origin import render_gs_offical
         self.net.gs_rasterizer = render_gs_offical
         self.device = torch.device('cuda')
         self.joint_color = torch.tensor([[1., 0, 0], [1., 0, 0]], device=self.device)
@@ -134,8 +134,8 @@ class SP_GS_GUI:
     def control_render(self, init_stage=None):
         with dpg.group(horizontal=True):
             dpg.add_checkbox(label='offical rasterizer',
-                default_value=getattr(self.net, 'use_official_gaussians_render', True),
-                tag='official_rasterizer', callback=self.viewer.set_need_update)
+                             default_value=getattr(self.net, 'use_official_gaussians_render', True),
+                             tag='official_rasterizer', callback=self.viewer.set_need_update)
         with dpg.group(horizontal=True):
             dpg.add_text('white background')
             dpg.add_checkbox(tag='bg_white', callback=self.viewer.set_need_update)
@@ -154,19 +154,19 @@ class SP_GS_GUI:
             # set camera by image_index
         with dpg.group(horizontal=True):
             dpg.add_input_int(label='img_id',
-                tag='img_id',
-                min_value=0,
-                min_clamped=True,
-                max_value=len(self.db) - 1,
-                max_clamped=True,
-                step=1,
-                callback=self.change_image_index
-            )
+                              tag='img_id',
+                              min_value=0,
+                              min_clamped=True,
+                              max_value=len(self.db) - 1,
+                              max_clamped=True,
+                              step=1,
+                              callback=self.change_image_index
+                              )
 
         with dpg.group(horizontal=True):
             dpg.add_text('cmp')
             dpg.add_radio_button(items=['no', 'GT', "blend", "error"], tag='cmp_GT',
-                callback=self.viewer.set_need_update, horizontal=True, default_value='no')
+                                 callback=self.viewer.set_need_update, horizontal=True, default_value='no')
         # interpolate two camera
         with dpg.group(horizontal=True):
             dpg.add_text('view_int')
@@ -221,12 +221,12 @@ class SP_GS_GUI:
             dpg.add_text('/')
 
             dpg.add_input_int(tag='rotate_total',
-                step=0,
-                default_value=360,
-                min_value=10,
-                min_clamped=True,
-                width=50,
-                callback=set_rotate_index_limit)
+                              step=0,
+                              default_value=360,
+                              min_value=10,
+                              min_clamped=True,
+                              width=50,
+                              callback=set_rotate_index_limit)
         with dpg.group(horizontal=True):
             dpg.add_text('stage:')
             stages = []
@@ -247,12 +247,12 @@ class SP_GS_GUI:
             dpg.add_text('show')
             dpg.add_text('size:')
             dpg.add_slider_float(tag='point_size',
-                min_value=0,
-                max_value=2.0,
-                default_value=1.0,
-                width=100,
-                callback=self.viewer.set_need_update
-            )
+                                 min_value=0,
+                                 max_value=2.0,
+                                 default_value=1.0,
+                                 width=100,
+                                 callback=self.viewer.set_need_update
+                                 )
         with dpg.group(horizontal=True):
             dpg.add_text('points')
             dpg.add_checkbox(tag='show_points', callback=self.viewer.set_need_update)
@@ -273,12 +273,12 @@ class SP_GS_GUI:
                 print('save image to', app_data['file_path_name'])
 
             with dpg.file_dialog(directory_selector=False,
-                show=False,
-                callback=save_image,
-                id="save_file_dialog_id",
-                default_filename=self.db.scene,
-                width=700,
-                height=400):
+                                 show=False,
+                                 callback=save_image,
+                                 id="save_file_dialog_id",
+                                 default_filename=self.db.scene,
+                                 width=700,
+                                 height=400):
                 dpg.add_file_extension(".jpg", color=(150, 255, 150, 255))
                 dpg.add_file_extension(".png", color=(255, 150, 150, 255))
 
@@ -294,12 +294,12 @@ class SP_GS_GUI:
                 print(f"save videos {videos.shape} to {save_path}")
 
             with dpg.file_dialog(directory_selector=False,
-                show=False,
-                callback=save_video,
-                id="save_video_dialog_id",
-                default_filename=self.db.scene,
-                width=700,
-                height=400):
+                                 show=False,
+                                 callback=save_video,
+                                 id="save_video_dialog_id",
+                                 default_filename=self.db.scene,
+                                 width=700,
+                                 height=400):
                 dpg.add_file_extension(".mp4", color=(150, 255, 150, 255))
 
             def save_video_callback():
@@ -340,15 +340,15 @@ class SP_GS_GUI:
             dpg.add_text('show sp1')
             dpg.add_checkbox(tag='show_sp1', callback=self.viewer.set_need_update)
             dpg.add_input_int(tag='sp_1', min_value=0,
-                max_value=self.net.num_superpoints - 1, width=100, callback=self.viewer.set_need_update)
+                              max_value=self.net.num_superpoints - 1, width=100, callback=self.viewer.set_need_update)
         with dpg.group(horizontal=True):
             dpg.add_text('show sp2')
             dpg.add_checkbox(tag='show_sp2', callback=self.viewer.set_need_update)
             dpg.add_input_int(tag='sp_2',
-                min_value=0,
-                max_value=self.net.num_superpoints - 1,
-                width=100,
-                callback=self.viewer.set_need_update)
+                              min_value=0,
+                              max_value=self.net.num_superpoints - 1,
+                              width=100,
+                              callback=self.viewer.set_need_update)
         with dpg.group(horizontal=True):
             def set_joint():
                 i = dpg.get_value('joint_idx') % self.net.num_superpoints
@@ -385,21 +385,21 @@ class SP_GS_GUI:
                 print(f'save pose to {filepath}')
 
             with dpg.file_dialog(directory_selector=False,
-                show=False,
-                callback=load_pose,
-                id="load_pose_dialog",
-                default_filename=self.db.scene,
-                width=700,
-                height=400):
+                                 show=False,
+                                 callback=load_pose,
+                                 id="load_pose_dialog",
+                                 default_filename=self.db.scene,
+                                 width=700,
+                                 height=400):
                 dpg.add_file_extension(".pose", color=(150, 255, 150, 255))
 
             with dpg.file_dialog(directory_selector=False,
-                show=False,
-                callback=save_pose,
-                id="save_pose_dialog",
-                default_filename=self.db.scene,
-                width=700,
-                height=400):
+                                 show=False,
+                                 callback=save_pose,
+                                 id="save_pose_dialog",
+                                 default_filename=self.db.scene,
+                                 width=700,
+                                 height=400):
                 dpg.add_file_extension(".pose", color=(150, 255, 150, 255))
             dpg.add_button(label='load', tag='load_pose', callback=lambda: dpg.show_item('load_pose_dialog'))
             dpg.add_button(label='save', tag='save_pose', callback=lambda: dpg.show_item('save_pose_dialog'))
@@ -485,14 +485,13 @@ class SP_GS_GUI:
         if 'model' in pth:  # checkpoints
             pth = pth['model']
         parser = argparse.ArgumentParser()
-        ext.config.options(parser)
+        my_ext.config.options(parser)
         options(parser)
         datasets.options(parser)
-        ext.my_logger.options(parser)
-        cfg = ext.config.make([f'-c={cfg_path}', f'--scene={scene}', '--no-log'],
-            ignore_unknown=True,
-            ignore_warning=True,
-            parser=parser)
+        my_ext.my_logger.options(parser)
+        cfg = my_ext.config.make(
+            [f'-c={cfg_path}', f'--scene={scene}', '--no-log'], ignore_unknown=True, ignore_warning=True, parser=parser
+        )
         print(cfg)
         db: datasets.DNerfDataset.DNeRFDataset = datasets.make(cfg, 'train')  # noqa
         print(db)
@@ -536,7 +535,6 @@ class SP_GS_GUI:
 
         if dpg.get_value('official_rasterizer'):
             from diff_gaussian_rasterization import GaussianRasterizationSettings as Settings
-            from NeRF.networks.renderer.gaussian_render_origin import render_gs_offical
             raster_settings = Settings(
                 image_width=info['size'][0],
                 image_height=info['size'][1],
@@ -553,7 +551,7 @@ class SP_GS_GUI:
             )
             gs_rasterizer = render_gs_offical
         else:
-            from NeRF.networks.renderer.gaussian_render import GaussianRasterizationSettings, render
+            from networks.renderer.gaussian_render import GaussianRasterizationSettings, render
             raster_settings = GaussianRasterizationSettings(
                 image_width=info['size'][0],
                 image_height=info['size'][1],
@@ -690,7 +688,7 @@ class SP_GS_GUI:
                 # print(net_out['points'])
 
         render_out_f = gs_rasterizer(**{k: v for k, v in net_out.items() if not k.startswith('_')},
-            raster_settings=raster_settings)
+                                     raster_settings=raster_settings)
 
         images = torch.permute(render_out_f['images'], (1, 2, 0)).contiguous()
         # background = torch.rand_like(images)
