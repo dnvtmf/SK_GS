@@ -1,0 +1,3 @@
+__base__: '../d_nerf.yaml'
+exp_name: lr_deform
+seed: 42

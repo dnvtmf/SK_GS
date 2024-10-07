@@ -1,0 +1,4 @@
+__base__: '_base.yaml'
+log_suffix: '6'
+arch_cfg:
+    sk_knn_num: 6

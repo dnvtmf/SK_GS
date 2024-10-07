@@ -5,20 +5,24 @@ ROOT=$(
   pwd
 )
 scenes=(hellwarrior hook jumpingjacks mutant standup trex) # bouncingballs lego
-gpus=(0 1 3 4 5 6 7 8 9)
+gpus=(0 1 2 3 4 5 6 7 8)
 args=()
 num_scenes=${#scenes[@]}
 num_gpus=${#gpus[@]}
 echo "There are ${num_gpus} gpus and ${num_scenes} scenes"
 #ablation_case=num_sp
 #ablation_case=warp
-ablation_case=sp_control
+#ablation_case=sp_control
+#ablation_case=num_knn
+#ablation_case=lr_deform
+#ablation_case=sk_knn_num
+ablation_case=loss_sparse
 
 for ((i = 0; i < ${num_gpus}; ++i)); do
   gpu_id="gpu${gpus[$i]}"
   if ! screen -ls ${gpu_id}; then
     echo "create ${gpu_id}"
-    screen -dmS ${gpu_id}
+    screen -A -dmS ${gpu_id}
   fi
   screen -S ${gpu_id} -p 0 -X stuff "^M"
   screen -S ${gpu_id} -p 0 -X stuff "conda activate SK_GS^M"
@@ -36,9 +40,9 @@ for ((i = 0; i < num_scenes; ++i)); do
     if [[ ${exp##*.} != 'yaml' || ${exp:0:1} == '_' ]]; then
       continue
     fi
-    #    if [[ -e results/${ablation_case}/${scenes[i]}/${exp%%.yaml}/last.pth ]]; then
-    #      continue
-    #    fi
+    if [[ -e results/${ablation_case}/${scenes[i]}/${exp%%.yaml}/last.pth ]]; then
+      continue
+    fi
     gpu_id=${gpus[$((k % num_gpus))]}
     echo "use gpu${gpu_id} on scene: ${scenes[i]} for exp: ${ablation_case}/${exp} "
     screen -S gpu${gpu_id} -p 0 -X stuff "^M"

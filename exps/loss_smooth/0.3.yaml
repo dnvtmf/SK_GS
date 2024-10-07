@@ -1,0 +1,5 @@
+__base__: '_base.yaml'
+log_suffix: '0.3'
+arch_cfg:
+    loss_cfg:
+        sparse: 0.3

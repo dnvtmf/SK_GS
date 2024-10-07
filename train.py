@@ -311,7 +311,7 @@ class GaussianTrainTask(ext.IterableFramework):
             if self.cfg.debug:
                 break
         self.hook_manager.after_eval_epoch()
-        self.logger.info(f"Eval [{self.step}/{self.num_steps}]: {self.metric_manager.average}")
+        self.logger.info(f"Eval [{self.step}/{self.num_steps}]: {self.metric_manager.str()}")
         if self.mode == 'train':
             if self.metric_manager.is_best:
                 self.save_model('best.pth')

@@ -1,0 +1,4 @@
+__base__: '_base.yaml'
+log_suffix: '0.03'
+arch_cfg:
+    lr_deform_scale: 0.03

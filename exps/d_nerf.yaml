@@ -18,7 +18,7 @@ arch_cfg:
         sk_init: 0
         sk_fix: 0
         sk: 40_000
-    num_knn: 3
+    num_knn: 4
     canonical_time_id: 0
     use_canonical_net: True
     canonical_replace_steps: [20_000]
@@ -42,7 +42,7 @@ arch_cfg:
     guided_step_start: 40000
     joint_init_steps: 10_000
     ## skeleton
-    sk_knn_num: 5
+    sk_knn_num: 6
     sk_use_features: true
     sk_feature_dim: 0
     sk_deform_net_cfg:
@@ -77,26 +77,31 @@ arch_cfg:
         sp_merge_interval: [200, 20_000, 30_000]
     loss_cfg:
         default: 0.0
+        ## both
         image: {method: l1, lambda: 0.8}
         ssim: 0.2
-        joint: 1.0
-        joint_all: 1.0
-        cmp_p: 1.0
-        cmp_t: 0.1
-        cmp_r: 0.1
-        cmp_s: 0.1
-        re_pos: 0 # reconstruct position
         sparse: 0.2
         smooth: 0 # .1
-        sp_arap_t: 0 # .01
-        sp_arap_ct: 0
-        #        p_arap_ct_init: 1.0
-        c_net: 1.0
+        ## dynamic stage
         arap:
             lambda: 0
             _values: [1.0e-2, 1.0e-2, 1.0e-4, 1.0e-4, 1.0e-5, 1.0e-5, 0]
             _steps: [2000, 10000, 10000, 15000, 20000, 30000, 30001]
             _vary: log
+        joint: 1.0
+        joint_all: 1.0
+        jp_dist: 0.
+        c_net: 1.0
+        re_pos: 0 # reconstruct position
+        sp_arap_t: 0 # .01
+        sp_arap_ct: 0
+        ## kinematic stage
+        ## discover
+        cmp_p: 1.0
+        cmp_t: 0.1
+        cmp_r: 0.1
+        cmp_s: 0.1
+        ## init stage
         acc:
             lambda: 0
             _values: [0, 1.0e-5, 0]
@@ -107,6 +112,7 @@ arch_cfg:
             _values: [0, 1.0e-3, 0]
             _steps: [0, 10000, 10000]
             _vary: fix
+        #        p_arap_ct_init: 1.0
 ## dataset
 num_init_points: 2_000
 scene: jumpingjacks
