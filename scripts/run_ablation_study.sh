@@ -16,7 +16,10 @@ echo "There are ${num_gpus} gpus and ${num_scenes} scenes"
 #ablation_case=num_knn
 #ablation_case=lr_deform
 #ablation_case=sk_knn_num
-ablation_case=loss_sparse
+#ablation_case=loss_sparse
+#ablation_case=loss_smooth
+#ablation_case=loss_joint
+ablation_case=loss_cmp_p
 
 for ((i = 0; i < ${num_gpus}; ++i)); do
   gpu_id="gpu${gpus[$i]}"
@@ -33,6 +36,12 @@ screen -ls%
 
 echo "The configuares in ${ablation_case}:"
 ls exps/${ablation_case}
+
+#find ${ROOT}/results -name '*init*.pth' | xargs rm
+#find ${ROOT}/results -name '*checkpoint*.pth' | xargs rm
+#find ${ROOT}/results -name 'best.pth' | xargs rm
+#find ${ROOT}/results -name 'last.pth' | xargs rm
+df -h ${ROOT}
 
 k=0
 for ((i = 0; i < num_scenes; ++i)); do

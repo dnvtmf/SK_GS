@@ -5,7 +5,6 @@ from .distributed import get_rank, get_world_size, is_main_process
 from .my_logger import logger
 from .meter import AverageMeter, DictMeter
 from my_ext.utils.progress import Progress
-from .magnitude_debug import MagnitudeDebug
 # 模型
 # 操作
 from .ops import *

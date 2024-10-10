@@ -1,6 +1,5 @@
-from typing import Union, Callable
-from pathlib import Path
 import math
+from typing import Union, Callable
 
 import cv2
 import dearpygui.dearpygui as dpg
@@ -143,9 +142,7 @@ class Viewer3D(ImageViewer):
             Tv2w = Tw2v.inverse()
         if Tv2w is not None:
             Tv2w = Tv2w.view(-1, 4, 4)[0].to(self.eye.device)
-            eye = Tv2w[:3, 3]
-            at = eye - Tv2w[:3, 2]
-            up = Tv2w[:3, 1]
+            eye, at, up = ops_3d.look_at_get(Tv2w)
         if eye is not None:
             self.eye = eye
         if at is not None:

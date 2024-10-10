@@ -49,7 +49,7 @@ __all__ = [
     'convert_coord_system_matrix', 'convert_coord_system_points', 'convert_coord_system', 'opengl_to_opencv',
     'coord_spherical_to', 'coord_to_spherical',
     'look_at', 'look_at_get',
-    'camera_intrinsics', 'perspective', 'ortho',
+    'camera_intrinsics', 'perspective',
     'point2pixel'
 ]
 COORDINATE_SYSTEM = 'opengl'
@@ -97,28 +97,28 @@ def convert_coord_system(T: Tensor, src='opengl', dst='opengl', inverse=False) -
         src, dst = dst, src
     if src == 'opengl':
         M = T.new_tensor({
-            'opencv': [[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1.]],
-            'llff': [[0, -1, 0, 0], [0, 0, 1, 0], [-1, 0, 0, 0], [0, 0, 0, 1.]],
-            'pytorch3d': [[0, 0, -1, 0], [0, 1, 0, 0], [1, 0, 0, 0], [0, 0, 0, 1.]],
-        }[dst])
+                             'opencv': [[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1.]],
+                             'llff': [[0, -1, 0, 0], [0, 0, 1, 0], [-1, 0, 0, 0], [0, 0, 0, 1.]],
+                             'pytorch3d': [[0, 0, -1, 0], [0, 1, 0, 0], [1, 0, 0, 0], [0, 0, 0, 1.]],
+                         }[dst])
     elif src == 'opencv':
         M = T.new_tensor({
-            'opengl': [[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1.]],
-            'llff': [[0, 1, 0, 0], [0, 0, -1, 0], [-1, 0, 0, 0], [0, 0, 0, 1.]],
-            'pytorch3d': [[0, 0, 1, 0], [0, -1, 0, 0], [1, 0, 0, 0], [0, 0, 0, 1.]],
-        }[dst])
+                             'opengl': [[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1.]],
+                             'llff': [[0, 1, 0, 0], [0, 0, -1, 0], [-1, 0, 0, 0], [0, 0, 0, 1.]],
+                             'pytorch3d': [[0, 0, 1, 0], [0, -1, 0, 0], [1, 0, 0, 0], [0, 0, 0, 1.]],
+                         }[dst])
     elif src == 'llff':
         M = T.new_tensor({
-            'opengl': [[0, 0, -1, 0], [-1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1.]],
-            'opencv': [[0, 0, -1, 0], [1, 0, 0, 0], [0, -1, 0, 0], [0, 0, 0, 1.]],
-            'pytorch3d': [[0, -1, 0, 0], [-1, 0, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1.]],
-        }[dst])
+                             'opengl': [[0, 0, -1, 0], [-1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1.]],
+                             'opencv': [[0, 0, -1, 0], [1, 0, 0, 0], [0, -1, 0, 0], [0, 0, 0, 1.]],
+                             'pytorch3d': [[0, -1, 0, 0], [-1, 0, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1.]],
+                         }[dst])
     elif src == 'pytorch3d':
         M = T.new_tensor({
-            'opengl': [[0, 0, 1, 0], [0, 1, 0, 0], [-1, 0, 0, 0], [0, 0, 0, 1.]],
-            'opencv': [[0, 0, 1, 0], [0, -1, 0, 0], [1, 0, 0, 0], [0, 0, 0, 1.]],
-            'llff': [[0, -1, 0, 0], [-1, 0, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1.]],
-        }[dst])
+                             'opengl': [[0, 0, 1, 0], [0, 1, 0, 0], [-1, 0, 0, 0], [0, 0, 0, 1.]],
+                             'opencv': [[0, 0, 1, 0], [0, -1, 0, 0], [1, 0, 0, 0], [0, 0, 0, 1.]],
+                             'llff': [[0, -1, 0, 0], [-1, 0, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1.]],
+                         }[dst])
     else:
         raise NotImplementedError(f"src={src}, dst={dst}")
     return T @ M if inverse else M @ T
@@ -211,7 +211,6 @@ _look_at = coord_trans_opengl.look_at
 _look_at_get = coord_trans_opengl.look_at_get
 _camera_intrinsics = coord_trans_opengl.camera_intrinsics
 _perspective = coord_trans_opengl.perspective
-_ortho = coord_trans_opengl.ortho
 _point2pixel = coord_trans_opengl.point2pixel
 
 
@@ -277,26 +276,6 @@ def perspective(fovy=0.7854, aspect=1.0, n=0.1, f=1000.0, device=None, size=None
     return _perspective(fovy, aspect, n, f, device, size)
 
 
-def ortho(l=-1., r=1.0, b=-1., t=1.0, n=0.1, f=1000.0, device=None):
-    """正交投影矩阵
-
-    Args:
-        # size: 长度. Defaults to 1.0.
-        # aspect: 长宽比W/H. Defaults to 1.0.
-        l: left plane
-        r: right plane
-        b: bottom place
-        t: top plane
-        n: near. Defaults to 0.1.
-        f: far. Defaults to 1000.0.
-        device: Defaults to None.
-
-    Returns:
-        Tensor: 正交投影矩阵
-    """
-    return _ortho(l, r, b, t, n, f, device)
-
-
 def point2pixel(
     points: Tensor, Tw2v: Tensor = None, Tv2s: Tensor = None, Tv2c: Tensor = None, Tw2c: Tensor = None,
     size: Tuple[int, int] = None
@@ -328,7 +307,6 @@ def set_coord_system(coord):
         _look_at_get = coord_trans_opengl.look_at_get
         _camera_intrinsics = coord_trans_opengl.camera_intrinsics
         _perspective = coord_trans_opengl.perspective
-        _ortho = coord_trans_opengl.ortho
         _point2pixel = coord_trans_opengl.point2pixel
     elif coord == 'opencv':
         _coord_spherical_to = coord_trans_opencv.coord_spherical_to
@@ -337,7 +315,6 @@ def set_coord_system(coord):
         _look_at_get = coord_trans_opencv.look_at_get
         _camera_intrinsics = coord_trans_opencv.camera_intrinsics
         _perspective = coord_trans_opencv.perspective
-        _ortho = coord_trans_opencv.ortho
         _point2pixel = coord_trans_opencv.point2pixel
     else:
         raise NotImplementedError(f"coord {coord} not supported")

@@ -116,18 +116,18 @@ class SP_GS_GUI:
             dpg.add_button(label='change', callback=change_eye)
 
     def change_image_index(self, *args, **kwargs):
-        image_index = self.image_index = dpg.get_value('img_id')
-        camera_id = self.db.camera_ids[image_index] if self.db.num_cameras > 1 else image_index
+        if self.db is None:
+            return
+        image_index = self.image_index = dpg.get_value('img_id') % len(self.db)
+        dpg.set_value('img_id', image_index)
+        camera_id = self.db.camera_ids[image_index] if getattr(self.db, 'num_cameras', -1) > 0 else image_index
 
         Tw2v = self.db.Tw2v[camera_id].cpu()
-        eye = self.db.Tv2w[camera_id, :3, 3].cpu()
-        self.viewer.eye = eye
-        d = Tw2v[2, :3]
-        self.viewer.at = eye - d  # * (eye / d).max()  # 不方便旋转
-        self.viewer.up = Tw2v[1, :3]
+        Tw2v = ops_3d.convert_coord_system_matrix(Tw2v, self.db.coord_dst, ops_3d.get_coord_system())
+        self.viewer.set_pose(Tw2v=Tw2v)
         if hasattr(self.db, 'times') and self.db.times is not None:
             dpg.set_value('time', self.db.times[image_index].item())
-        self.viewer.set_fovy(math.degrees(self.db.get_fovy(camera_id).item()))
+        self.viewer.set_fovy(math.degrees((self.db.FoV[camera_id] if self.db.FoV.ndim == 2 else self.db.FoV)[1].item()))
         self.viewer.resize(self.db.image_size[0], self.db.image_size[1])
         print('change_image_index:', image_index, camera_id)
 
@@ -319,18 +319,16 @@ class SP_GS_GUI:
             # dpg.add_button(label='save video', tag='save_video', callback=save_video_button)
 
     def vary_view(self):
-        if not dpg.get_value('iterp_view'):
+        if self.db is None or not dpg.get_value('iterp_view'):
             return
-        view_1 = ops_3d.rigid.Rt_to_lie(self.db.Tw2v[dpg.get_value('img_id_1')])
-        view_2 = ops_3d.rigid.Rt_to_lie(self.db.Tw2v[dpg.get_value('img_id_2')])
+        idx1, idx2 = dpg.get_value('cam_id_1'), dpg.get_value('cam_id_2')
+        view_1 = ops_3d.rigid.Rt_to_lie(self.db.Tw2v[idx1])
+        view_2 = ops_3d.rigid.Rt_to_lie(self.db.Tw2v[idx2])
         t = dpg.get_value('view_t')
         Tw2v = ops_3d.rigid.lie_to_Rt(view_1 * (1 - t) + view_2 * t).cpu()
-        eye = Tw2v.inverse()[:3, 3]
-        self.viewer.eye = eye
-        d = Tw2v[2, :3]
-        self.viewer.at = eye - d  # * (eye / d).max()  # 不方便旋转
-        self.viewer.up = Tw2v[1, :3]
-        self.viewer.set_fovy(math.degrees(self.db.get_fovy(dpg.get_value('img_id_1'))))
+        Tw2v = ops_3d.convert_coord_system_matrix(Tw2v, self.db.coord_dst, ops_3d.get_coord_system())
+        self.viewer.set_pose(Tw2v=Tw2v)
+        self.viewer.set_fovy(math.degrees(self.db.FoV[idx1, 1] if self.db.FoV.ndim == 2 else self.db.FoV[1]))
         self.viewer.resize(self.db.image_size[0], self.db.image_size[1])
         self.viewer.need_update = True
 
@@ -516,7 +514,8 @@ class SP_GS_GUI:
     def rendering(self, Tw2v, fovy, size):
         Tw2v = Tw2v.cuda()
         if dpg.get_value('official_rasterizer'):
-            Tw2v = ops_3d.convert_coord_system(Tw2v, 'opengl', 'colmap')
+            Tw2v = ops_3d.convert_coord_system(
+                Tw2v, ops_3d.get_coord_system(), self.db.coord_dst if self.db is not None else 'opencv')
             Tv2c = ops_3d.opencv.perspective(fovy, size=self.db.image_size).cuda()
         else:
             Tv2c = ops_3d.perspective(fovy, size=self.db.image_size).cuda()
@@ -602,8 +601,8 @@ class SP_GS_GUI:
 
         net_out['points'] = ops_3d.xfm(net_out['points'], R)
         net_out['rotations'] = ops_3d.quaternion.mul(ops_3d.rotation.R_to_quaternion(R)[None], net_out['rotations'])
-        # net_out['sh_features'] = rotation_SH(net_out['sh_features'], R)
-        net_out['colors'] = self.net.get_colors(net_out.pop('sh_features'), net_out['points'], info['campos'])
+        net_out['colors'] = ops_3d.SH_to_RGB(
+            net_out.pop('sh_features'), net_out['points'], info['campos'], self.net.active_sh_degree, clamp=True)
         point_scale = 10 ** ((dpg.get_value('point_size') * 0.5 - 1) * 2)  # [1e-2, 1.]
         if dpg.get_value('show_points'):
             net_out['scales'] = torch.full_like(net_out['scales'], self.mean_point_scale * point_scale).float()

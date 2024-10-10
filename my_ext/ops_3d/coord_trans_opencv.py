@@ -10,12 +10,14 @@ COLMAP/OpenCV:
   |
   ↓
   y
-裁剪空间Clip space为左手系: +x指向右手边, +y 指向上方, +z指向屏幕内; z 的坐标值越小，距离观察者越近
-y [-1, 1]
-↑
-|   z [-1, 1]
-| ↗
-.------> x [-1, 1]
+裁剪空间Clip space为右手系
+     z
+   ↗
+  .-------> x
+  |
+  |
+  ↓
+  y
 屏幕坐标系： X 轴向右为正，Y 轴向下为正，坐标原点位于窗口的左上角 (左手系: z轴向屏幕内，表示深度)
     z
   ↗
@@ -40,6 +42,7 @@ from torch import Tensor
 from my_ext.utils.torch_utils import to_tensor
 from .misc import normalize
 from .coord_trans_common import fov_to_focal
+from .xfm import apply
 
 TensorType = Union[float, int, np.ndarray, Tensor]
 
@@ -56,15 +59,13 @@ def coord_spherical_to(radius: TensorType, thetas: TensorType, phis: TensorType)
         Tensor: 点P的笛卡尔坐标系, shape: [..., 3]
     """
     radius = to_tensor(radius, dtype=torch.float32)
-    thetas = to_tensor(thetas, dtype=torch.float32)
-    phis = to_tensor(phis, dtype=torch.float32)
-    # yapf: disable
+    thetas = torch.pi - to_tensor(thetas, dtype=torch.float32)
+    phis = -to_tensor(phis, dtype=torch.float32)
     return torch.stack([
-            radius * torch.sin(thetas) * torch.cos(phis),
-            -radius * torch.cos(thetas),
-            -radius * torch.sin(thetas) * torch.sin(phis),
-        ], dim=-1)
-    # yapf: enable
+        radius * torch.sin(thetas) * torch.cos(phis),
+        radius * torch.cos(thetas),
+        radius * torch.sin(thetas) * torch.sin(phis),
+    ], dim=-1)
 
 
 def coord_to_spherical(points: Tensor):
@@ -89,6 +90,7 @@ def look_at(eye: Tensor, at: Tensor = None, up: Tensor = None, inv=False) -> Ten
         dir_vec[..., 3] = 1.
     else:
         dir_vec = normalize(eye - at)
+    dir_vec = -dir_vec
 
     if up is None:
         up = torch.zeros_like(dir_vec)
@@ -97,7 +99,7 @@ def look_at(eye: Tensor, at: Tensor = None, up: Tensor = None, inv=False) -> Ten
         y_axis = torch.cross(dir_vec, y_axis, dim=-1).norm(dim=-1, keepdim=True) < 1e-6
         up = torch.scatter_add(up, -1, y_axis + 1, 1 - y_axis.to(up.dtype) * 2)
     shape = eye.shape
-    right_vec = normalize(torch.cross(up, dir_vec, dim=-1))  # 相机空间x轴方向
+    right_vec = -normalize(torch.cross(up, dir_vec, dim=-1))  # 相机空间x轴方向
     up_vec = torch.cross(dir_vec, right_vec, dim=-1)  # 相机空间y轴方向
     if inv:
         Tv2w = torch.eye(4, device=eye.device, dtype=eye.dtype).expand(*shape[:-1], -1, -1).contiguous()
@@ -119,10 +121,10 @@ def look_at(eye: Tensor, at: Tensor = None, up: Tensor = None, inv=False) -> Ten
 
 def look_at_get(Tv2w: Tensor):
     eye = Tv2w[..., :3, 3]
-    right_vec = Tv2w[..., :3, 0]
+    right_vec = -Tv2w[..., :3, 0]
     up_vec = Tv2w[..., :3, 1]
     dir_vec = Tv2w[..., :3, 2]
-    at = eye - dir_vec
+    at = eye + dir_vec
     return eye, at, torch.cross(dir_vec, right_vec, dim=-1)
 
 
@@ -138,25 +140,30 @@ def camera_intrinsics(focal=None, cx_cy=None, size=None, fovy=np.pi, inv=False, 
         focal = fov_to_focal(fovy, H)
     if cx_cy is None:
         cx, cy = 0.5 * W, 0.5 * H
+    elif isinstance(cx_cy, Tensor):
+        cx, cy = cx_cy.unbind(-1)
     else:
         cx, cy = cx_cy
-    shape = [x.shape for x in [focal, cx, cy] if isinstance(x, Tensor)]
+    if isinstance(focal, Tensor) and focal.ndim > 1 and focal.shape[-1] == 2:
+        focal_x, focal_y = focal.unbind(-1)
+    else:
+        focal_x, focal_y = focal, focal
+    shape = [x.shape for x in [focal_x, focal_y, cx, cy] if isinstance(x, Tensor)]
     if len(shape) > 0:
         shape = list(torch.broadcast_shapes(*shape))
     if inv:  # Ts2v
-        fr = 1. / focal
         Ts2v = torch.zeros(shape + [3, 3], **kwargs)
-        Ts2v[..., 0, 0] = fr
-        Ts2v[..., 0, 2] = cx * fr
-        Ts2v[..., 1, 1] = fr
-        Ts2v[..., 1, 2] = cy * fr
+        Ts2v[..., 0, 0] = 1 / focal_x
+        Ts2v[..., 0, 2] = -cx * Ts2v[..., 0, 0]
+        Ts2v[..., 1, 1] = 1. / focal_y
+        Ts2v[..., 1, 2] = -cy * Ts2v[..., 1, 1]
         Ts2v[..., 2, 2] = 1
         return Ts2v
     else:
         K = torch.zeros(shape + [3, 3], **kwargs)  # Tv2s
-        K[..., 0, 0] = focal
+        K[..., 0, 0] = focal_x
         K[..., 0, 2] = cx
-        K[..., 1, 1] = focal
+        K[..., 1, 1] = focal_y
         K[..., 1, 2] = cy
         K[..., 2, 2] = 1
         return K
@@ -201,31 +208,53 @@ def perspective(fovy: Union[float, Tensor] = 0.7854, aspect=1.0, n=0.1, f=1000.0
     return Tv2c
 
 
-def perspective2(size, fx, fy, cx, cy, n=0.1, f=1000.0, device=None):
+def perspective2(size, focals=None, FoV=None, pp=None, n=0.1, f=1000.0, device=None):
     """OpenCV 透视投影矩阵
 
     Args:
-        size: (W, H)
-        fx:
-        fy: focal length
-        cx:
-        cy: position of center
-        n: near. Defaults to 0.1.
-        f: far. Defaults to 1000.0.
+        size (int | Tuple[int, int]): (W, H)
+        focals (float | list | tuple | Tensor): focal length, shape: [...], [..., 1], [..., 2]
+        FoV (float | list | tuple | Tensor): filed of view, radians (e.g, pi), shape: [...], [..., 1], [..., 2]
+        pp (float | list | tuple | Tensor): position of center, shape: [...], [..., 1], [..., 2]
+        n (float | list | tuple | Tensor): near. Defaults to 0.1.
+        f (float | list | tuple | Tensor): far. Defaults to 1000.0.
         device: Defaults to None.
-
-
     Returns:
         Tensor: 透视投影矩阵
     """
-    shape = []
-    for x in [cx, cy, n, f]:
+    shape = torch.Size([1])
+    focals, FoV, pp, n, f = [to_tensor(x) for x in [focals, FoV, pp, n, f]]
+    for x in [focals, FoV, pp, n, f]:
         if isinstance(x, Tensor):
-            shape = x.shape
-    Tv2c = torch.zeros(*shape, 4, 4, dtype=torch.float, device=device)
+            if x.ndim > 0 and x.shape[-1] in [1, 2]:
+                shape = torch.broadcast_shapes(shape, x.shape[:-1])
+            else:
+                shape = torch.broadcast_shapes(shape, x.shape)
+    Tv2c = torch.zeros(*shape, 4, 4, device=device)
     W, H = size
-    z_sign = 1.0
+    if pp is None:
+        cx, cy = W / 2, H / 2
+    else:
+        if pp.ndim > 0 and pp.shape[-1] <= 2:
+            cx, cy = pp[..., 0], pp[..., 1 if pp.shape[-1] == 2 else 0]
+        else:
+            cx, cy = pp, pp
 
+    if FoV is not None:
+        if FoV.ndim > 0 and FoV.shape[-1] <= 2:
+            fx = fov_to_focal(FoV[..., 0], W)
+            fy = fov_to_focal(FoV[..., 1 if FoV.shape[-1] == 2 else 0], H)
+        else:
+            fx = fov_to_focal(FoV, W)
+            fy = fov_to_focal(FoV, H)
+    else:
+        assert focals is not None
+        if focals.ndim > 0 and focals.shape[-1] <= 2:
+            fx, fy = focals[..., 0], focals[..., 1 if focals.shape[-1] == 2 else 0]
+        else:
+            fx = fy = focals
+
+    z_sign = 1.0
     Tv2c[..., 0, 0] = 2.0 * fx / W
     Tv2c[..., 1, 1] = 2.0 * fy / H
     Tv2c[..., 0, 2] = (2.0 * cx - W) / W
@@ -234,41 +263,6 @@ def perspective2(size, fx, fy, cx, cy, n=0.1, f=1000.0, device=None):
     Tv2c[..., 2, 3] = -(f * n) / (f - n)
     Tv2c[..., 3, 2] = z_sign
     return Tv2c
-
-
-# @try_use_C_extension
-def ortho(l=-1., r=1.0, b=-1., t=1.0, n=0.1, f=1000.0, device=None):
-    """正交投影矩阵
-
-    Args:
-        # size: 长度. Defaults to 1.0.
-        # aspect: 长宽比W/H. Defaults to 1.0.
-        l: left plane
-        r: right plane
-        b: bottom place
-        t: top plane
-        n: near. Defaults to 0.1.
-        f: far. Defaults to 1000.0.
-        device: Defaults to None.
-
-    Returns:
-        Tensor: 正交投影矩阵
-    """
-    raise NotImplementedError
-    # yapf: disable
-    return torch.tensor([
-        [2/(r-l), 0,       0,       (l+r)/(l-r)],
-        [0,       2/(t-b), 0,       (b+t)/(b-t)],
-        [0,       0,       2/(n-f), (n+f)/(n-f)],
-        [0,       0,       0,       1],
-    ], dtype=torch.float32, device=device)
-    # return torch.tensor([
-    #     [1 / (size * aspect), 0, 0, 0],
-    #     [0, 1 / size, 0, 0],
-    #     [0, 0, -(f + n) / (f - n), -(f + n) / (f - n)],
-    #     [0, 0, 0, 0],
-    # ], dtype=torch.float32, device=device)
-    # yapf: enable
 
 
 def point2pixel(
@@ -288,149 +282,16 @@ def point2pixel(
     """
     if points.shape[-1] == 3:
         points = torch.cat([points, torch.ones_like(points[..., :1])], dim=-1)  # to homo
-    if Tw2v is not None and Tv2s is not None:
-        points = points @ Tw2v.transpose(-1, -2)
-        points = points[..., :3] @ Tv2s.transpose(-1, -2)
+    if Tw2v is not None:
+        points = apply(points, Tw2v)
+    if Tv2s is not None:
+        points = apply(points[..., :3], Tv2s)
         pixel = points[..., :2] / points[..., 2:3]
         return pixel, points[..., 2]
     else:
-        if Tw2c is None:
-            assert Tw2v is not None and Tv2c is not None
-            Tw2c = Tv2c @ Tw2v
-        ndc = points @ Tw2c.transpose(-1, -2)
+        ndc = apply(points, Tv2c)
+        ndc = ndc[..., :3] / ndc[..., 3:]
         pixel = torch.zeros_like(ndc[..., :2])
-        pixel[..., 0] = (1 + ndc[..., 0] / ndc[..., 3]) * 0.5 * size[0] - 0.5
-        pixel[..., 1] = (1 + ndc[..., 1] / ndc[..., 3]) * 0.5 * size[1] - 0.5
-        return pixel, ndc[..., 2] / ndc[..., 3]
-
-
-def test():
-    from my_ext.utils import set_printoptions
-    from .coord_trans_common import focal_to_fov
-    from my_ext.ops_3d import opengl, convert_coord_system_matrix, convert_coord_system
-    print()
-    set_printoptions()
-    for i in range(4):
-        print(coord_spherical_to(0.1, np.deg2rad(30), np.deg2rad(90 * i)))
-    for _ in range(10):
-        thetas = np.random.uniform(0, 180)
-        phis = np.random.uniform(0, 360)
-        eye = coord_spherical_to(0.1, np.deg2rad(thetas), np.deg2rad(phis))
-        r, t_, p_ = coord_to_spherical(eye)
-        print(np.rad2deg(t_.item()) - thetas, np.rad2deg(p_.item()) - phis)
-        assert np.abs(np.rad2deg(t_.item()) - thetas) < 1e-4
-        diff = np.rad2deg(p_.item()) - phis
-        diff = np.minimum(np.abs(diff), np.abs(diff + 360))
-        assert diff < 1e-5, f"diff={diff}"
-
-    # eye = torch.randn(3)
-    # at = torch.randn(3)
-    # up = torch.randn(3)
-    eye = torch.tensor([1, 0, 1.])
-    at = torch.tensor([0, 0, 0.])
-    up = torch.tensor([0, -1, 0.])
-    print('coord_spherical_to', eye, coord_spherical_to(*coord_to_spherical(eye)))
-    pose = look_at(eye, at, up, True)
-    pose2 = look_at(*look_at_get(pose), inv=True)
-    # print(pose @ look_at(eye, at, up))
-    # print(eye, at, up)
-    # print(*look_at_get(pose))
-    print('look_at_get', (pose2 - pose).abs().max())
-    r, t, p = coord_to_spherical(eye)
-    print(r, math.degrees(t), math.degrees(p))
-    eye_gl = opengl.coord_spherical_to(r, t, p)
-    print('eye_gl', eye_gl)
-    at_gl = torch.tensor([0, 0, 0])
-    up_gl = torch.tensor([0, 1, 0.])
-    Tw2v = opengl.look_at(eye_gl, at_gl, up_gl)
-    # Tw2v = convert_coord_system_matrix(Tw2v, 'opengl', 'opencv')
-    Tw2v = convert_coord_system(Tw2v, 'opengl', 'opencv')
-    print('opengl:', Tw2v.inverse(), 'opencv', pose, sep='\n')
-    print('diff:', Tw2v.inverse() - pose, sep='\n')
-    # with vis3d:
-    #     vis3d.add_camera_poses(pose, color=(1, 0, 0))
-
-
-def test_perspective():
-    from my_ext._C import get_C_function
-    print()
-    cu_f = get_C_function('perspective')
-    fovy = torch.tensor(math.radians(120.))
-    aspect = 1.0
-    near, far = 0.1, 1000
-    mat_1 = cu_f(fovy, aspect, near, far)
-    print(mat_1)
-    mat_2 = cu_f(fovy.cuda(), aspect, near, far)
-    print(mat_2)
-    # py_f = get_python_function('perspective')
-    py_f = perspective
-    mat_py = py_f(fovy, aspect, near, far)
-    print(mat_py)
-    assert (mat_1 - mat_2.cpu()).abs().max() < 1e-6
-    assert (mat_1 - mat_py).abs().max() < 1e-6
-
-
-def test_ortho():
-    from my_ext._C import get_C_function
-    print()
-    cu_f = get_C_function('ortho')
-    data = torch.tensor([-2, 3, -4, 5, 0.1, 1000])
-    mat_1 = cu_f(data)
-    print(mat_1)
-    mat_2 = cu_f(data.cuda()).cpu()
-    print(mat_2)
-    # py_f = get_python_function('ortho')
-    py_f = ortho
-    mat_py = py_f(*data.tolist())
-    print(mat_py)
-    assert (mat_1 - mat_2).abs().max() < 1e-6
-    assert (mat_1 - mat_py).abs().max() < 1e-6
-
-
-def test_camera_intrinsics():
-    import matplotlib.pyplot as plt
-    from .coord_trans_opengl import point2pixel
-    torch.set_printoptions(precision=6, sci_mode=False)
-    np.set_printoptions(precision=6, suppress=True)
-    print()
-    points = torch.tensor([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1.]])
-    campos = coord_spherical_to(2., math.radians(45.), math.radians(45.))
-    # campos = coord_spherical_to(2., math.radians(90.), math.radians(0.))
-    print('campos:', campos)
-    Tw2v = look_at(campos, torch.zeros(3))
-
-    fovy = math.radians(90)
-    size = (400, 400)
-    Tv2s = camera_intrinsics(size=size, fovy=fovy)
-    Ts2v = camera_intrinsics(size=size, fovy=fovy, inv=True)
-    Tv2c = perspective(fovy=fovy, size=size)
-    # print('Tv2w:', Tw2v.inverse())
-    # print(Tw2v)
-    print('Ts2v error', Tv2s.inverse() - Ts2v)
-    points2 = point2pixel(points, Tw2v=Tw2v, Tv2c=Tv2c, size=size)[0].numpy()
-    points1 = point2pixel(points, Tw2v=Tw2v, Tv2s=Tv2s, size=size)[0].numpy()
-    # print(Tv2c)
-    points = torch.cat([points, points.new_ones((len(points), 1))], dim=-1)
-    # points2 = (points @ (Tv2c @ Tw2v).T)
-    # print(points2)
-    # points2 = (points2[:, :2] + 1.) * 0.5 * torch.tensor(size)
-    print('points2:', points2)
-    points = (points @ Tw2v.T)
-    print(points)
-    points = points[:, :3] / points[:, 3:]
-    points = (points @ Tv2s.T)
-    print(points)
-    points = points[:, :] / points[:, 2:]
-    # points = (Tv2s @ (Tw2v[:3, :3] @ points[:, :3].T) + Tw2v[:3, 3:4]).T
-    points = points.numpy()
-    print('points', points)
-    print('points1', points1)
-    plt.plot(points1[(0, 1), 0], size[1] - points1[(0, 1), 1], c='r')
-    plt.plot(points1[(0, 2), 0], size[1] - points1[(0, 2), 1], c='g')
-    plt.plot(points1[(0, 3), 0], size[1] - points1[(0, 3), 1], c='b')
-    plt.plot(points2[(0, 1), 0], size[1] - points2[(0, 1), 1], c='r', ls='--')
-    plt.plot(points2[(0, 2), 0], size[1] - points2[(0, 2), 1], c='g', ls='--')
-    plt.plot(points2[(0, 3), 0], size[1] - points2[(0, 3), 1], c='b', ls='--')
-    plt.xlim(0, 400)
-    plt.ylim(0, 400)
-    plt.show()
+        pixel[..., 0] = (1 + ndc[..., 0]) * 0.5 * size[0]  # - 0.5
+        pixel[..., 1] = (1 + ndc[..., 1]) * 0.5 * size[1]  # - 0.5
+        return pixel, points[..., 2]
