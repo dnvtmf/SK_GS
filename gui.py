@@ -290,7 +290,7 @@ class SP_GS_GUI:
                 save_path = Path(app_data['file_path_name'])
                 utils.save_mp4(save_path, videos)
                 self.saved_videos = []
-                dpg.configure_item('save_video', label='')
+                dpg.configure_item('save_video', label='save video')
                 print(f"save videos {videos.shape} to {save_path}")
 
             with dpg.file_dialog(directory_selector=False,
@@ -303,20 +303,18 @@ class SP_GS_GUI:
                 dpg.add_file_extension(".mp4", color=(150, 255, 150, 255))
 
             def save_video_callback():
-                if dpg.get_value('save_video'):
-                    self.is_save_video = True
-                    self.saved_videos = []
-                    dpg.configure_item('save_video', label='(0)')
-                else:
+                if self.is_save_video:
                     self.is_save_video = False
                     dpg.show_item('save_video_dialog_id')
-                    # self.saved_videos = []
-                    # dpg.configure_item('save_video', label='')
+                    dpg.configure_item('save_video', label='save video')
+                else:
+                    self.is_save_video = True
+                    self.saved_videos = []
+                    dpg.configure_item('save_video', label='save video (0)')
                 self.viewer.set_need_update()
 
-            dpg.add_text('save_video')
-            dpg.add_checkbox(tag='save_video', callback=save_video_callback)
-            # dpg.add_button(label='save video', tag='save_video', callback=save_video_button)
+            dpg.add_button(label='save video', tag='save_video', callback=save_video_callback)
+            dpg.add_input_int(tag='save_video_num', default_value=120, step=0, width=40)
 
     def vary_view(self):
         if self.db is None or not dpg.get_value('iterp_view'):
@@ -572,7 +570,7 @@ class SP_GS_GUI:
             stage = kwargs['stage'] = dpg.get_value('stage')
         else:
             stage = None
-        if stage == 'skeleton':
+        if 'sk' in stage:
             kwargs['sk_r_delta'] = self.now_pose * dpg.get_value('time_pose')
             if dpg.get_value('joint_rot'):
                 scale = math.radians(dpg.get_value('joint_rot_scale'))
@@ -659,7 +657,7 @@ class SP_GS_GUI:
 
         elif dpg.get_value('show_joint'):
             mask = self.net.joint_parents[:, 0] >= 0
-            if self.net.sk_is_init and stage != 'skeleton':
+            if self.net.sk_is_init and 'sk' not in stage:
                 joint = self.xfm_superpoints(self.net.sp_points, net_out)
             elif self.net.joint_is_init:
                 ja = torch.arange(M, device=self.device)[mask]
@@ -830,34 +828,44 @@ class SP_GS_GUI:
         while dpg.is_dearpygui_running():
             dpg.render_dearpygui_frame()
             if self.is_vary_time:
-                t = dpg.get_value('time')
-                t = t + 0.01
+                if self.is_save_video:
+                    t = len(self.saved_videos) / dpg.get_value('save_video_num')
+                else:
+                    t = dpg.get_value('time')
+                    t = t + 0.01
                 if t > 1:
-                    self.is_save_video = False
                     t = 0.
                 dpg.set_value('time', t)
                 self.viewer.need_update = True
             if self.is_vary_pose:
-                t = dpg.get_value('time_pose')
-                t = t + 0.01
+                if self.is_save_video:
+                    t = len(self.saved_videos) / dpg.get_value('save_video_num')
+                else:
+                    t = dpg.get_value('time_pose')
+                    t = t + 0.01
                 if t > 1:
-                    self.is_save_video = False
                     t = 0.
                 dpg.set_value('time_pose', t)
                 self.viewer.need_update = True
             if self.is_vary_view:
-                t = dpg.get_value('view_t')
-                t = t + 1. / dpg.get_value('view_speed')
+                if self.is_save_video:
+                    t = len(self.saved_videos) / dpg.get_value('save_video_num')
+                else:
+                    t = dpg.get_value('view_t')
+                    t = t + 1. / dpg.get_value('view_speed')
                 if t > 1:
-                    self.is_save_video = False
                     t = 0.
                 dpg.set_value('view_t', t)
                 self.vary_view()
 
             if dpg.get_value('rotate_auto'):
-                rotate_index = dpg.get_value('rotate_index') + 1
-                if rotate_index >= dpg.get_value('rotate_total'):
-                    rotate_index = 0
+                if self.is_save_video:
+                    rotate_index = len(self.saved_videos) / dpg.get_value('save_video_num')
+                    rotate_index = int(rotate_index * dpg.get_value('rotate_total'))
+                else:
+                    rotate_index = dpg.get_value('rotate_index') + 1
+                    if rotate_index >= dpg.get_value('rotate_total'):
+                        rotate_index = 0
                 dpg.set_value('rotate_index', rotate_index)
                 self.viewer.need_update = True
             if self.viewer.need_update:
@@ -875,9 +883,9 @@ class SP_GS_GUI:
                 dpg.set_viewport_height(dpg.get_item_height(self.viewer.win_tag))
                 last_size = now_size
             dpg.configure_item('control', label=f"FPS: {dpg.get_frame_rate()}")
-            if self.is_save_video and dpg.get_value('save_video'):
+            if self.is_save_video and len(self.saved_videos) < dpg.get_value('save_video_num'):
                 self.saved_videos.append(utils.as_np_image(self.viewer.data).copy())
-                dpg.configure_item('save_video', label=f"({len(self.saved_videos)})")
+                dpg.configure_item('save_video', label=f"save video({len(self.saved_videos)})")
         dpg.destroy_context()
 
     def callback_mouse_click(self, sender, app_data):

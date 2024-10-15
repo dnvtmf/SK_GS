@@ -490,7 +490,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         self.nn_weight, self.nn_dist, self.nn_idxs = None, None, None
 
         ## superpoints -> skeleton
-        self.sk_re_init_gs = sk_re_init_gs  # 重新初始化Gaussians?
+        self.sk_re_init_gs = sk_re_init_gs  # re-initialize Gaussians in skeleton-stage?
         self.sk_densify_gs = sk_densify_gs
         self.sp_guided_detach = sp_guided_detach
         self.joint_update_interval = joint_update_interval
@@ -553,7 +553,6 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         super().set_from_dataset(dataset)
         self.num_frames = dataset.num_frames  # the number of frames
         M = self.num_superpoints
-        # self.register_buffer('sp_delta_tr', torch.zeros([self.num_frames, M, sum(self.sp_dims)]))
         self.train_db_times = dataset.times[dataset.camera_ids == dataset.camera_ids[0]]
         assert self.num_frames == len(self.train_db_times)
         self.global_tr = nn.Parameter(torch.zeros(self.num_frames, 7))
@@ -568,7 +567,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         lr = self.lr_deform_scale * cfg.lr * self.lr_spatial_scale * self.lr_position_init
         if self.canonical_net is not None:
             params_groups.append({'params': list(self.canonical_net.parameters()), 'lr': lr, 'name': 'canonical'})
-        params_groups.append({'params': list(self.sp_deform_net.parameters()), 'lr': lr, 'name': 'deform'})
+        params_groups.append({'params': list(self.sp_deform_net.parameters()), 'lr': lr, 'name': 'sp_deform'})
         params_groups.append({'params': [self.sp_points], 'lr': lr, 'name': 'sp_points'})
         if self._sp_radius is not None:
             params_groups.append({'params': [self._sp_radius], 'lr': lr, 'name': 'sp_radius'})
@@ -609,7 +608,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         else:
             step = (self._step - self.stages['sk_init'][0])
         for group in optimizer.param_groups:
-            if group.get('name', None) in ['deform', 'sk_deform', 'canonical']:
+            if group.get('name', None) in ['sp_deform', 'sk_deform', 'canonical']:
                 group['lr'] = self.lr_scheduler['deform'](step)
             elif group.get('name', None) == 'xyz':
                 group['lr'] = self.lr_scheduler['xyz'](step)
@@ -623,8 +622,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         self.hyper_feature = nn.Parameter(torch.full([N, self.hyper_dim], -1e-2))
         if self.sp_W is not None:
             self.sp_W = nn.Parameter(torch.ones([N, self.num_superpoints]))
-        # self.sk_W = nn.Parameter(torch.zeros((N, self.num_superpoints)))
-        if self.warp_method == 'largest':
+        if self.p2sp is not None:
             self.p2sp = self.p2sp.new_zeros(N)
 
     def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True, **kwargs):
@@ -650,7 +648,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         super().load_state_dict(state_dict, strict, **kwargs)
 
     @torch.no_grad()
-    def init_superpoints(self, force=False, use_hyper=False):
+    def init_superpoints(self, force=False, use_hyper=True):
         if not self.training:
             return
         if self.sp_is_init and not force:
@@ -658,9 +656,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         times = torch.linspace(0, 1, self.init_num_times, device=self.sp_points.device)
         points = self.points
         if use_hyper:
-            trans_samp = []
-            for i in range(self.init_num_times):
-                trans_samp.append(self.sp_deform_net(points, times[i])['d_xyz'])
+            trans_samp = [self.sp_deform_net(points, times[i])['d_xyz'] for i in range(self.init_num_times)]
             trans_samp = torch.stack(trans_samp, dim=1)
             hyper_pcl = (trans_samp + points[:, None]).reshape(points.shape[0], -1)
         else:
@@ -671,7 +667,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
             init_pcl = self.sp_deform_net(points, self.train_db_times[self.canonical_time_id])['d_xyz'] + points
             self.sp_deform_net.load_state_dict(self.canonical_net.state_dict())
             logging.info('[red]Apply canonical_net')
-        # Initialize Nodes
+        # Initialize Superpoints
         pcl_to_samp = init_pcl if hyper_pcl is None else hyper_pcl
         init_nodes_idx = FurthestSampling(pcl_to_samp.detach()[None], self.num_superpoints)[0]
         self.sp_points.data = init_pcl[init_nodes_idx]
@@ -682,7 +678,6 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         if self._sp_weight is not None:
             self._sp_weight.data = torch.zeros_like(self._sp_radius)
         opt = self._task.optimizer
-        # self.nodes = self.change_optimizer(opt, self.nodes, 'nodes', op='replace')['nodes']
         self._xyz = self.change_optimizer(opt, self.sp_points, 'xyz', op='replace')['xyz']
         names = ['_features_dc', '_features_rest', '_scaling', '_opacity', '_rotation']
         if self.hyper_dim > 0:
@@ -794,7 +789,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
                 d_points = (ops_3d.apply(points[:, None], spT[indices]) * weights[..., None]).sum(dim=1) - points
             else:
                 d_points = ops_3d.apply(points, spT[self.p2sp]) - points
-        else:
+        else:  # SE3
             if method == 'LBS_c' or method == 'LBS':
                 d_points = (spT[indices].act(points[:, None]) * weights[..., None]).sum(dim=1) - points
             else:
@@ -836,40 +831,13 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         return d_points, d_rotation, d_scales, spT, d_rot, d_scale, weights, indices
 
     @torch.no_grad()
-    def init_joint_pos(self, force=False, use_gs=False):
+    def init_joint_pos(self, force=False):
         if self.joint_is_init and not force:
             return
         self.joint_is_init = self.joint_is_init.new_tensor(True)
         logging.info('init joint_pos')
         sp_points = self.sp_points[..., :3]
-        # sp_T_c = None
-        # if self.canonical_time_id >= 0:
-        #     sp_tr_c = self.sp_deform_net(sp_points, self.train_db_times[self.canonical_time_id])
-        #     sp_T_c = self.tr_to_T(sp_tr_c)
-        #     sp_points = ops_3d.xfm(sp_points, sp_T_c)
         self.joint_pos.data.copy_((sp_points[:, None] + sp_points[None, :]) * 0.5)
-        if not use_gs:
-            return
-        raise RuntimeError()
-        # W = self.sp_weights.new_zeros((len(self.points), self.num_superpoints))
-        # W = torch.scatter(W, 1, self.sp_knn, self.sp_weights)
-        # sp_T = ops_3d.rigid.quaternion_to_Rt(self.sp_cache[..., :7])
-        # for a in range(self.num_superpoints):
-        #     for b in range(self.num_superpoints):
-        #         w = W[:, a] + W[:, b]
-        #         mask = w.ge(0.5)
-        #         if mask.sum() == 0:
-        #             continue
-        #         points = self.points[mask]
-        #         p_a = ops_3d.apply(points[None], sp_T[:, a:a + 1])
-        #         p_b = ops_3d.apply(points[None], sp_T[:, b:b + 1])
-        #         dist = (p_a - p_b).norm(dim=-1).mean(dim=0)
-        #         # if self.canonical_time_id >= 0:
-        #         #     p = points[torch.argmin(dist)]
-        #         #     self.joint_pos[a, b] = (ops_3d.apply(p, sp_T_c[a]) + ops_3d.apply(p, sp_T_c[b])) * 0.5
-        #         # else:
-        #         self.joint_pos[a, b] = points[torch.argmin(dist)]
-        # return
 
     @torch.no_grad()
     def init_joint_pos_v2(self, knn, knn_weights, force=False, set_cost=False):
@@ -906,21 +874,10 @@ class SkeletonGaussianSplatting(GaussianSplatting):
 
         sp_R = SO3.InitFromVec(self.sp_cache[..., 3:7])  # [T, M]
         joint_rot = sp_R.inv()[:, None] * sp_R[:, :, None]  # [T, M, M], R_b^-1 R_a
-        # if self.canonical_time_id >= 0:
-        #     sp_se3_c = SE3.InitFromVec(self.sp_cache[self.canonical_time_id, :, :7])
-        #     sp_se3_c_inv = sp_se3_c.inv()
-        #     sp_so3_c = SO3.InitFromVec(sp_se3_c.vec()[..., 3:])
-        #     sp_so3_c_inv = sp_so3_c.inv()
-        #
-        #     joint_rot = sp_so3_c[None, None] * joint_rot * sp_so3_c_inv[None, None]
-        #     sp_delta_tr = SE3.InitFromVec(self.sp_cache[..., :7]) * sp_se3_c_inv[None]
-        #     sp_points = self.sp_points.clone()
-        #     self.sp_points.data.copy_(sp_se3_c.act(sp_points))
-        # else:
-        sp_points = self.sp_points
         sp_delta_tr = self.sp_cache[..., :7]
         optimizer = torch.optim.Adam([self.joint_pos], lr=1.0e-3)
         loss_meter = my_ext.DictMeter(float2str=utils.float2str)
+
         with torch.enable_grad():
             for i in range(self.joint_init_steps):
                 tid = random.randrange(self.num_frames)
@@ -938,8 +895,6 @@ class SkeletonGaussianSplatting(GaussianSplatting):
                     loss_meter.reset()
                 if progress_func is not None:
                     progress_func()
-        # if self.canonical_time_id >= 0:
-        #     self.sp_points.data.copy_(sp_points)
         logging.info('Init joint')
         return
 
@@ -1021,7 +976,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         if self.sk_is_init:
             return
         if progress_func is None and self._task is not None:
-            progress = getattr(self._task, 'progress', None)  # type: Optional[ext.Progress]
+            progress = getattr(self._task, 'progress', None)  # type: Optional[my_ext.Progress]
         else:
             progress = None
 
@@ -1055,12 +1010,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         ## assign W
         self.joints.data.copy_(self.sp_points)
         a, b, mask = self.joint_pair
-        # if self.canonical_time_id < 0:
         self.joints[mask] = self.joint_pos[a, b]
-        # else:
-        #     T_c = SE3.InitFromVec(self.sp_cache[self.canonical_time_id, :, :7])
-        #     joint_c = T_c[a].act(self.joint_pos[a, b])
-        #     self.joints[mask] = joint_c
         if True or self.stages['sk_init'][2] == 0:
             if progress is not None:
                 progress.pause('train')
@@ -1079,20 +1029,8 @@ class SkeletonGaussianSplatting(GaussianSplatting):
             self._task.save_checkpoint('sk_init.pth', use_prefix=False, force=True, manage=False)
         logging.info('[red]Init skeleton')
 
-    def kinematic(
-        self,
-        joints: Tensor,
-        t: Tensor,
-        g_tr: Tensor = None,
-        time_id: int = None,
-        sk_r_delta: Tensor = None,
-    ):
+    def kinematic(self, joints: Tensor, t: Tensor, g_tr: Tensor = None, time_id: int = None, sk_r_delta: Tensor = None):
         """运动学模型"""
-        # if self.canonical_time_id >= 0:
-        #     Tc = SE3.InitFromVec(self.sp_cache[self.canonical_time_id, :, :7])
-        #     joints = Tc.act(joints)
-        # else:
-        #     Tc = None
         ## get joint rotation
         if self.training or not self.test_time_interpolate:
             x_input = joints if self.sk_feature is None else torch.cat([joints, self.sk_feautre], dim=1)
@@ -1105,6 +1043,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         elif time_id is None:
             w, idx1, idx2 = utils.get_interpolate_weight(self.train_db_times, t)
             sk_r, d_rot, d_scale = torch.lerp(self.sk_cache[idx1], self.sk_cache[idx2], w).split(self.sk_dims, -1)
+            sk_r = ops_3d.quaternion.normalize(sk_r)
         else:
             sk_r, d_rot, d_scale = self.sk_cache[time_id].split(self.sk_dims, dim=-1)
         sk_r = self.to_SO3(sk_r)
@@ -1112,12 +1051,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
             sk_r = (SO3.exp(sk_r_delta) if sk_r_delta.shape[-1] == 3 else SO3.InitFromVec(sk_r_delta)) * sk_r
         ## skeleton transforms
         sk_t = joints + sk_r.act(-joints)
-        # utils.set_printoptions()
-        # print(joints.view(-1)[:10])
-        # print([(g['name'], g['lr']) for g in self._task.optimizer.param_groups])
         sk_tr = SE3.InitFromVec(torch.cat([sk_t, sk_r.vec()], dim=-1))
-        # if self.canonical_time_id >= 0:
-        #     sk_tr = Tc[self.joint_parents[:, 0]].inv() * sk_tr * Tc
         if g_tr is None:
             g_tr = None
         elif isinstance(g_tr, SE3):
@@ -1176,14 +1110,6 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         d_xyz = (sk_T[indices].act(points[:, None]) * weights[..., None]).sum(dim=1) - points
         d_rot = (sk_d_rot[indices] * weights[..., None]).sum(dim=1)
         d_scale = (sk_d_scale[indices] * weights[..., None]).sum(dim=1)
-
-        # d_xyz, d_rot, d_scale, sk_T = self.warp(
-        #     points, joints.detach(),
-        #     sk_T, None, sk_d_rot, sk_d_scale,
-        #     weights, indices, method='LBS',
-        # )
-        # if self._step > 40100:
-        #     exit()
         return d_xyz, d_rot, d_scale, sk_T.vec(), sk_d_rot, sk_d_scale, g_tr, weights, indices
 
     def get_now_stage(self, stage=None, now_step: int = None):
@@ -1344,7 +1270,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         return sp_joint_loss.mean(), joint_dist.mean()
 
     def loss_joint_discovery(self, sp_T: Tensor, sp_T_c: Tensor = None, update_joint=True):
-        """在训练过程中发现joints"""
+        """discovery joints during traning"""
         self.init_joint_pos()
         sp_T = sp_T.detach() if self.sp_guided_detach else sp_T
         if sp_T_c is not None:
@@ -1670,7 +1596,6 @@ class SkeletonGaussianSplatting(GaussianSplatting):
                     optimizer, self._sp_weight[mask], 'sp_weight', op='concat')['sp_weight']
             if self.sp_W is not None:
                 self.sp_W = self.change_optimizer(optimizer, {'sp_W': self.sp_W[:, mask]}, op='concat', dim=1)['sp_W']
-            # self.sk_W = self.change_optimizer(optimizer, {'sk_W': self.sk_W[:, mask]}, op='concat', dim=1)['sk_W']
             self.sp_cache = torch.cat([self.sp_cache, self.sp_cache[:, mask]], dim=1)
             self.joint_pos = self.change_optimizer(
                 optimizer, self.joint_pos[mask], 'joint_pos', op='concat')['joint_pos']
@@ -1820,8 +1745,8 @@ class SkeletonGaussianSplatting(GaussianSplatting):
             x=self.points, K=K, weights=weights, feature=self.hyper_feature)
 
         # Picking pts to densify
-        selected_pts_mask = torch.logical_and(node_avg_xgradnorm > max_grad,
-                                              node_avg_x.isnan().logical_not().all(dim=-1))
+        selected_pts_mask = torch.logical_and(
+            node_avg_xgradnorm > max_grad, node_avg_x.isnan().logical_not().all(dim=-1))
 
         pruned_pts_mask = node_edge_count.eq(0)
         if selected_pts_mask.sum() > 0 or pruned_pts_mask.sum() > 0:

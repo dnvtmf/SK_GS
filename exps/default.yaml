@@ -1,0 +1,136 @@
+arch: SK_GS
+arch_cfg:
+    sh_degree: 3
+    net_cfg:
+        pos_enc_p: 'freq'
+        pos_enc_p_cfg: {degree: 10}
+        pos_enc_t: 'freq'
+        pos_enc_t_cfg: {degree: 6}
+        width: 256
+        depth: 8
+        skips: [4,]
+    train_schedule:
+        init_fix: 2_000
+        init: 8_000
+        sp_fix: 3_000
+        sp: 27_000
+        sk_init: 0
+        sk_fix: 0
+        sk: 40_000
+    num_knn: 4
+    canonical_time_id: 0
+    use_canonical_net: True
+    canonical_replace_steps: [20_000]
+    ## superpoints
+    num_superpoints: 512
+    local_frame: true
+    hyper_dim: 8
+    sp_prune_threshold: 0.001
+    sp_split_threshold: 0.0002
+    sp_merge_threshold: 0.005
+    max_d_scale: -1.0
+    is_blender: true
+    init_sampling_step: 7500
+    node_max_num_ratio_during_init: 16
+    LBS_method: W # 'W', 'dist', 'kernel', 'weighted_kernel'
+    warp_method: largest # LBS_c, LBS, largest
+    # get skeleton
+    joint_update_interval: [1_000, 20_000, 40_000]
+    sk_momentum: 0.9
+    sp_guided_detach: true
+    guided_step_start: 40000
+    joint_init_steps: 10_000
+    ## skeleton
+    sk_knn_num: 6
+    sk_use_features: true
+    sk_feature_dim: 0
+    sk_deform_net_cfg:
+        pos_enc_p: 'freq'
+        pos_enc_p_cfg: {degree: 10}
+        pos_enc_t: 'freq'
+        pos_enc_t_cfg: {degree: 6}
+        width: 256
+        depth: 8
+        skips: [4,]
+    ## other
+    test_time_interpolate: false
+    ## learning rate
+    lr_position_init: 0.16
+    lr_position_final: 1.6e-3
+    lr_position_delay_mult: 0.01
+    lr_position_max_steps: 30_000
+    lr_deform_max_steps: 40_000
+    lr_deform_scale: 1.0
+    adaptive_control_cfg:
+        opacity_reset_interval: [3000, 3000, -1]
+        densify_interval: [100, 500, 25_000]
+        prune_interval: [100, 500, 25_000]
+
+        densify_grad_threshold: 0.0002
+        densify_percent_dense: 0.01
+        prune_opacity_threshold: 0.005
+        prune_max_screen_size: 20
+        prune_percent_dense: 0.1
+
+        sp_adjust_interval: [200, 10_000, 20_000]
+        sp_merge_interval: [200, 20_000, 30_000]
+    loss_cfg:
+        default: 0.0
+        ## both
+        image: {method: l1, lambda: 0.8}
+        ssim: 0.2
+        sparse: 0.3
+        smooth: 0 # .1
+        ## dynamic stage
+        arap:
+            lambda: 0
+            _values: [1.0e-2, 1.0e-2, 1.0e-4, 1.0e-4, 1.0e-5, 1.0e-5, 0]
+            _steps: [2000, 10000, 10000, 15000, 20000, 30000, 30001]
+            _vary: log
+        joint: 1.0
+        joint_all: 1.0
+        jp_dist: 0.
+        c_net: 1.0
+        re_pos: 0 # reconstruct position
+        sp_arap_t: 0 # .01
+        sp_arap_ct: 0
+        ## kinematic stage
+        ## discover
+        cmp_p: 1.0
+        cmp_t: 0.01
+        cmp_r: 0.01
+        cmp_s: 0.01
+        ## init stage
+        acc:
+            lambda: 0
+            _values: [0, 1.0e-5, 0]
+            _steps: [0, 10000, 10000]
+            _vary: fix
+        elastic:
+            lambda: 0
+            _values: [0, 1.0e-3, 0]
+            _steps: [0, 10000, 10000]
+            _vary: fix
+        #        p_arap_ct_init: 1.0
+## dataset
+num_init_points: 2_000
+dataset_root: ./data
+## solver
+optimizer: adam
+optimizer_cfg:
+    eps: 1.0e-15
+    betas: [0.9, 0.999]
+
+epochs: 80_000
+lr: 1.0e-3
+lr_scheduler_in_model: true
+lr_schedulers:
+    - ['exp', 10_000, 1.0, 0.01]
+    - ['exp', 30_000, 1.0, 0.01]
+    - ['exp', 40_000, 1.0, 0.01]
+eval_interval: 5_000
+metric: image/PSNR
+metrics: [image, loss]
+metric_goal: max
+vis_interval: 5000
+checkpoint_interval: 5000

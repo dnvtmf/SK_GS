@@ -185,7 +185,7 @@ class WatchItMoveDataset(NERF_Base_Dataset):
         inputs = {}
         if self.with_rays:
             rays = ops_3d.get_rays(Tv2s, self.Tv2w[cam_idx], size=self.image_size, normalize=True, offset=0.5,
-                sample_stride=s)
+                                   sample_stride=s)
             inputs['rays_o'] = rays[0]
             inputs['rays_d'] = rays[1]
         image = utils.load_image(self.root.joinpath(self.samples[index]))
@@ -193,7 +193,7 @@ class WatchItMoveDataset(NERF_Base_Dataset):
 
         infos = {
             'Tw2v': self.Tw2v[cam_idx],
-            'Tw2c': self.Tv2c @ self.Tw2v[cam_idx],
+            'Tv2c': self.Tv2c,
             'Tv2s': Tv2s,
             'size': (image.shape[-2], image.shape[-3]),
             'index': index,

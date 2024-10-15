@@ -10,8 +10,6 @@ import torch
 import torch.multiprocessing as mp
 from torch.utils.data import Dataset as _Dataset
 
-from my_ext.data_transform import Transform
-
 
 class Dataset(_Dataset, ABC):
 
@@ -20,7 +18,7 @@ class Dataset(_Dataset, ABC):
         root: Path,
         samples=None,
         class_names: List[str] = None,
-        transforms: Transform = None,
+        transforms=None,
         cache_in_memory=False,
         **kwargs
     ):

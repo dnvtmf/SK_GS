@@ -4,12 +4,12 @@ ROOT=$(
   cd $(dirname $0)/..
   pwd
 )
-scenes=(hellwarrior hook jumpingjacks mutant standup trex bouncingballs) # lego
-gpus=(0 1 3 4 5 6 7 8 9)
+scenes=(hellwarrior hook jumpingjacks mutant standup trex) # bouncingballs lego
+gpus=(0 1 2 3 4 5 6 7 8)
 args=()
 test_args=()
-cfg_name='d_nerf_sp_gs.yaml'
-out_dir='DNeRF_SP'
+cfg_name='d_nerf_400.yaml'
+out_dir='DNeRF_400'
 num_scenes=${#scenes[@]}
 num_gpus=${#gpus[@]}
 echo "There are ${num_gpus} gpus and ${num_scenes} scenes"

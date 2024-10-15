@@ -19,7 +19,8 @@ echo "There are ${num_gpus} gpus and ${num_scenes} scenes"
 #ablation_case=loss_sparse
 #ablation_case=loss_smooth
 #ablation_case=loss_joint
-ablation_case=loss_cmp_p
+#ablation_case=loss_cmp_p
+ablation_case=loss_cmp_t
 
 for ((i = 0; i < ${num_gpus}; ++i)); do
   gpu_id="gpu${gpus[$i]}"
@@ -49,18 +50,19 @@ for ((i = 0; i < num_scenes; ++i)); do
     if [[ ${exp##*.} != 'yaml' || ${exp:0:1} == '_' ]]; then
       continue
     fi
-    if [[ -e results/${ablation_case}/${scenes[i]}/${exp%%.yaml}/last.pth ]]; then
-      continue
-    fi
     gpu_id=${gpus[$((k % num_gpus))]}
     echo "use gpu${gpu_id} on scene: ${scenes[i]} for exp: ${ablation_case}/${exp} "
     screen -S gpu${gpu_id} -p 0 -X stuff "^M"
-    screen -S gpu${gpu_id} -p 0 -X stuff \
-      "python3 train.py -c exps/${ablation_case}/${exp} --scene=${scenes[i]} ${args[*]} ^M"
-    screen -S gpu${gpu_id} -p 0 -X stuff \
-      "python3 test.py -c exps/${ablation_case}/${exp} \
-          --load results/${ablation_case}/${scenes[i]}/${exp%%.yaml}/best.pth \
+    if [[ ! -e results/${ablation_case}/${scenes[i]}/${exp%%.yaml}/last.pth ]]; then
+      screen -S gpu${gpu_id} -p 0 -X stuff \
+        "python3 train.py -c exps/${ablation_case}/${exp} --scene=${scenes[i]} ${args[*]} ^M"
+    fi
+    if [[ ! -e results/${ablation_case}/${scenes[i]}/${exp%%.yaml}/results.json ]]; then
+      screen -S gpu${gpu_id} -p 0 -X stuff \
+        "python3 test.py -c exps/${ablation_case}/${exp} \
+          --load results/${ablation_case}/${scenes[i]}/${exp%%.yaml}/last.pth \
           --scene ${scenes[i]} --load-no-strict ${test_args[*]} ^M"
+    fi
     k=$((k + 1))
   done
 done

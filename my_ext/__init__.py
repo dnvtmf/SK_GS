@@ -8,7 +8,6 @@ from my_ext.utils.progress import Progress
 # 模型
 # 操作
 from .ops import *
-from .structures import *
 from .ops_3d import *
 # from .cluster import *
 # from .metrics import *
@@ -20,20 +19,12 @@ from . import (
     utils,
     config,
     my_logger,
-    # 功能
-    structures,
     ops,
     ops_3d,
-    # cluster,
-    # 模型
-    # layers,
-    # blocks,
     # 数据
     datasets,
-    # data_transform,
     data_loader,
     # 训练
-    # distances,
     lr_scheduler,
     optimizer,
     checkpoint,

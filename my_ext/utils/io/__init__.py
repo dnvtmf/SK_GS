@@ -1,4 +1,4 @@
-from . import image, video, point_clouds, voxel, material, mesh
+from . import image, video, point_clouds, material, mesh
 
 from .image import *
 from .video import *
