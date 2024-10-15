@@ -45,7 +45,7 @@ class BaseFramework:
         config_args=None,
         m_data_transforms=None,
         m_datasets=None,
-        m_data_loader=ext.data_loader,
+        m_data_loader=None,
         *args,
         **kwargs
     ):
@@ -60,7 +60,6 @@ class BaseFramework:
         self.output = Path(__file__).absolute().parent.parent / 'results'
         self.device = None  # type: Optional[torch.device]
         self.model = None  # type: Optional[torch.nn.Module]
-        self.averaged_model = None  # type: Optional[ext.ops.AveragedModel]
         self.criterion = None  # type: Optional[torch.nn.Module]
         self.optimizer = None  # type: Optional[Union[torch.optim.SGD, Dict[str,torch.optim.SGD]]]
         self.lr_scheduler = None  # type: Optional[ext.lr_scheduler.LRScheduler]
@@ -252,25 +251,6 @@ class BaseFramework:
         self.model = self._to_parallel(self.model)
         if with_criterion:
             self.criterion = self._to_parallel(self.criterion)
-
-    def enable_model_average(self):
-        if self.train_loader is None or not self.cfg.model_average:
-            return
-        if self.interval_grad_acc > 0:
-            step = self.cfg.model_average_cfg.setdefault('step', 1)
-            step = ext.utils.make_divisible(step, self.interval_grad_acc)
-            self.cfg.model_average_cfg['step'] = step
-        self.averaged_model = ext.ops.AveragedModel(
-            self.model, enable=self.cfg.model_average, **self.cfg.model_average_cfg
-        )
-        if not self.averaged_model.enable:
-            return
-        self.store('averaged_model')
-        self.logger.info(f'==> Enable {self.averaged_model}')
-        self.hook_manager.add_hook(
-            lambda: self.averaged_model.update(self.model, self.epoch, True), 'after_train_epoch'
-        )
-        self.hook_manager.add_hook(lambda: self.averaged_model.update(self.model, self.epoch), 'after_train_step')
 
     def enable_train_time_estimate(self):
         self.hook_manager.add_hook(self.train_timer.start, 'before_train_epoch')
@@ -473,7 +453,7 @@ class Framework(BaseFramework):
         config_args=None,
         m_data_transforms=None,
         m_datasets=None,
-        m_data_loader=ext.data_loader,
+        m_data_loader=None,
         *args,
         **kwargs
     ):
@@ -591,7 +571,7 @@ class IterableFramework(BaseFramework):
         config_args=None,
         m_data_transforms=None,
         m_datasets=None,
-        m_data_loader=ext.data_loader,
+        m_data_loader=None,
         *args,
         **kwargs
     ):
@@ -603,8 +583,8 @@ class IterableFramework(BaseFramework):
         self.hook_manager.add_hook(lambda: self._set_now_state(step=self.step + 1), 'after_train_step', insert=0)
         self.hook_manager.add_hook(lambda: self._set_now_state(epoch=0), 'after_train_epoch', insert=0)
         self.hook_manager.add_hook(lambda: self._set_now_state(is_during_training=False),
-            'before_eval_epoch',
-            insert=0)
+                                   'before_eval_epoch',
+                                   insert=0)
         self.configure(config_args, *args, **kwargs)
 
     def step_2_environment(self, *args, **kwargs):

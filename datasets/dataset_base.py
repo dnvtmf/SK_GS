@@ -181,7 +181,7 @@ def test():
 
         def __init__(self, n=100):
             samples = self.new_list(range(n))
-            super().__init__(Path('.'), samples, cache_in_memory=True)
+            super().__init__(Path('../my_ext/datasets'), samples, cache_in_memory=True)
 
         @Dataset.cache_in_memory
         def load_random_tensor(self, index):

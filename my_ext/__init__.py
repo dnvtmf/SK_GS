@@ -21,9 +21,6 @@ from . import (
     my_logger,
     ops,
     ops_3d,
-    # 数据
-    datasets,
-    data_loader,
     # 训练
     lr_scheduler,
     optimizer,

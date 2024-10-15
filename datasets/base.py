@@ -7,7 +7,7 @@ import torch
 from torch import Tensor
 
 from my_ext import ops_3d, utils
-from my_ext.datasets import Dataset
+from .dataset_base import Dataset
 from my_ext.utils import Registry, srgb_to_rgb, load_image
 
 NERF_DATASETS = Registry(ignore_case=True)

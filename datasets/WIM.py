@@ -188,7 +188,7 @@ class WatchItMoveDataset(NERF_Base_Dataset):
                                    sample_stride=s)
             inputs['rays_o'] = rays[0]
             inputs['rays_d'] = rays[1]
-        image = utils.load_image(self.root.joinpath(self.samples[index]))
+        image = utils.load_image(self.root.joinpath(self.samples[index]), size=self.image_size)
         image = torch.from_numpy(image).float() / 255.
 
         infos = {
@@ -232,7 +232,7 @@ class WatchItMoveDataset(NERF_Base_Dataset):
         return super().extra_repr() + s
 
     def get_image(self, index: int):
-        image = utils.load_image(self.root.joinpath(self.samples[index]))
+        image = utils.load_image(self.root.joinpath(self.samples[index]), size=self.image_size)
         image = torch.from_numpy(image).float() / 255.
         background = self.get_background(image)
         torch.lerp(background, image[..., :3], image[..., -1:], out=image[..., :3])

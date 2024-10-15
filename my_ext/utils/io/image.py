@@ -64,9 +64,12 @@ def rgb_to_gray(image: Tensor) -> Tensor:
     return 0.299 * image[..., 0] + 0.587 * image[..., 1] + 0.114 * image[..., 2]
 
 
-def load_image(filepath, **kwargs):
+def load_image(filepath, size=None, **kwargs):
     # return imageio.v3.imread(filepath, **kwargs)
-    return np.array(Image.open(filepath))
+    img = Image.open(filepath)
+    if size is not None:
+        img = img.resize(size, resample=Image.Resampling.BICUBIC)
+    return np.array(img)
 
 
 def load_gray(filepath):

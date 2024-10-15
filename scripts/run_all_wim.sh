@@ -9,8 +9,8 @@ scenes=(atlas baxter spot cassie iiwa nao pandas)
 gpus=(0 1 2 3 4 5 6 7 8)
 args=()
 test_args=()
-cfg_name='wim.yaml'
-out_dir='WIM'
+cfg_name='wim_512.yaml'
+out_dir='WIM512'
 num_scenes=${#scenes[@]}
 num_gpus=${#gpus[@]}
 echo "There are ${num_gpus} gpus and ${num_scenes} scenes"
