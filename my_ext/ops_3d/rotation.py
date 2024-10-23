@@ -67,15 +67,7 @@ def quaternion_to_R(q: Tensor):
     if q.shape[-1] == 7:
         q = q[..., 3:]
     assert q.shape[-1] == 4  # [x, y, z, w]
-    x, y, z, w = q.unbind(-1)
-    # yapf: disable
-    R = torch.stack([
-        1 - 2 * y * y - 2 * z * z, 2 * x * y - 2 * w * z, 2 * w * y + 2 * x * z,
-        2 * x * y + 2 * w * z, 1 - 2 * x * x - 2 * z * z, 2 * y * z - 2 * w * x,
-        2 * x * z - 2 * w * y, 2 * w * x + 2 * y * z, 1 - 2 * x * x - 2 * y * y,
-    ], dim=-1).reshape(*x.shape, 3, 3)
-    # yapf: enable
-    return R
+    return quaternion.toR(q)
 
 
 def quaternion_to_axis_angle(q: Tensor):

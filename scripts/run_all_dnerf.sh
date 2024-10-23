@@ -8,8 +8,8 @@ scenes=(hellwarrior hook jumpingjacks mutant standup trex) # bouncingballs lego
 gpus=(0 1 2 3 4 5 6 7 8)
 args=()
 test_args=()
-cfg_name='d_nerf_400.yaml'
-out_dir='DNeRF_400'
+cfg_name='d_nerf_sc_gs.yaml'
+out_dir='DNeRF_SC'
 num_scenes=${#scenes[@]}
 num_gpus=${#gpus[@]}
 echo "There are ${num_gpus} gpus and ${num_scenes} scenes"

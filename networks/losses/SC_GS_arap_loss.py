@@ -5,26 +5,7 @@ import numpy as np
 import pytorch3d.ops
 import torch
 from pytorch3d.ops import ball_query
-
-
-def quaternion_to_matrix(quaternions: torch.Tensor) -> torch.Tensor:
-    i, j, k, r = torch.unbind(quaternions, -1)
-    two_s = 2.0 / (quaternions * quaternions).sum(-1)
-    o = torch.stack(
-        (
-            1 - two_s * (j * j + k * k),
-            two_s * (i * j - k * r),
-            two_s * (i * k + j * r),
-            two_s * (i * j + k * r),
-            1 - two_s * (i * i + k * k),
-            two_s * (j * k - i * r),
-            two_s * (i * k - j * r),
-            two_s * (j * k + i * r),
-            1 - two_s * (i * i + j * j),
-        ),
-        -1,
-    )
-    return o.reshape(quaternions.shape[:-1] + (3, 3))
+from my_ext import ops_3d
 
 
 def produce_edge_matrix_nfmt(verts: torch.Tensor, edge_shape, ii, jj, nn, device="cuda") -> torch.Tensor:
@@ -96,7 +77,7 @@ def cal_connectivity_from_points(
 
     # Make sure ranges are within the radius
     nn_idx[:, least_edge_num:] = torch.where(nn_dist[:, least_edge_num:] < radius ** 2,
-        nn_idx[:, least_edge_num:], -torch.ones_like(nn_idx[:, least_edge_num:]))
+                                             nn_idx[:, least_edge_num:], -torch.ones_like(nn_idx[:, least_edge_num:]))
 
     nn_dist[:, least_edge_num:] = torch.where(
         nn_dist[:, least_edge_num:] < radius ** 2,
@@ -296,8 +277,8 @@ def arap_deformation_loss(trajectory, node_radius=None, trajectory_rot=None, K=5
     arap_error = (weight[..., None] * (P_prime - torch.einsum('bxy,bky->bkx', R, P))).square().mean(dim=0).sum()
 
     if with_rot:
-        init_rot = quaternion_to_matrix(trajectory_rot[:, 0])
-        tar_rot = quaternion_to_matrix(trajectory_rot[:, fid])
+        init_rot = ops_3d.quaternion.toR(trajectory_rot[:, 0])
+        tar_rot = ops_3d.quaternion.toR(trajectory_rot[:, fid])
         R_rot = torch.bmm(R, init_rot)
         rot_error = (R_rot - tar_rot).square().mean(dim=0).sum()
     else:

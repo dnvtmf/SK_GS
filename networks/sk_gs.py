@@ -9,15 +9,16 @@ import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
 from pytorch3d.ops import knn_points
+from lietorch import SE3, SO3
 
 import my_ext
 from my_ext.ops.point_sample import FurthestSampling
+from my_ext import utils, ops_3d, SH2RGB
+from my_ext.blocks import MLP_with_skips
+
 from networks.encoders import POSITION_ENCODERS
 from networks.gaussian_splatting import GaussianSplatting, NETWORKS, get_expon_lr_func, BasicPointCloud
 from networks.losses.SC_GS_arap_loss import cal_connectivity_from_points, cal_arap_error
-from my_ext import get_C_function, utils, ops_3d
-from my_ext.blocks import MLP_with_skips
-from lietorch import SE3, SO3
 
 
 def get_superpoint_features(value: Tensor, neighbor: Tensor, G: Tensor, num_sp: int):
@@ -549,6 +550,17 @@ class SkeletonGaussianSplatting(GaussianSplatting):
     def num_superpoints(self):
         return self.sp_points.shape[0]
 
+    @property
+    def get_scaling(self):
+        scales = self._scaling
+        if 0 < self._step < self.stages['sp_fix'][0]:
+            scales = scales.mean(dim=(0, 1) if self.scales_all_same else 1, keepdim=True).expand_as(scales)
+        return self.scaling_activation(scales)
+
+    @property
+    def device(self):
+        return self._xyz.device
+
     def set_from_dataset(self, dataset):
         super().set_from_dataset(dataset)
         self.num_frames = dataset.num_frames  # the number of frames
@@ -617,9 +629,12 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         return
 
     def create_from_pcd(self, pcd: BasicPointCloud, lr_spatial_scale: float = None):
-        super().create_from_pcd(pcd, lr_spatial_scale)
+        points = self.init_superpoints(True, False, torch.from_numpy(pcd.points.astype(np.float32)), True)
+        points = points.detach().cpu().numpy()
+        new_pcd = BasicPointCloud(points, SH2RGB(np.zeros_like(points)), np.zeros_like(points))
+        super().create_from_pcd(new_pcd, lr_spatial_scale)
         N = len(self._xyz)
-        self.hyper_feature = nn.Parameter(torch.full([N, self.hyper_dim], -1e-2))
+        self.hyper_feature = nn.Parameter(torch.full([N, self.hyper_dim], -1e-2, device=self.device))
         if self.sp_W is not None:
             self.sp_W = nn.Parameter(torch.ones([N, self.num_superpoints]))
         if self.p2sp is not None:
@@ -648,13 +663,13 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         super().load_state_dict(state_dict, strict, **kwargs)
 
     @torch.no_grad()
-    def init_superpoints(self, force=False, use_hyper=True):
+    def init_superpoints(self, force=False, use_hyper=True, points=None, return_nodes=False):
         if not self.training:
             return
         if self.sp_is_init and not force:
             return
-        times = torch.linspace(0, 1, self.init_num_times, device=self.sp_points.device)
-        points = self.points
+        times = torch.linspace(0, 1, self.init_num_times, device=self.device)
+        points = self.points if points is None else points
         if use_hyper:
             trans_samp = [self.sp_deform_net(points, times[i])['d_xyz'] for i in range(self.init_num_times)]
             trans_samp = torch.stack(trans_samp, dim=1)
@@ -669,7 +684,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
             logging.info('[red]Apply canonical_net')
         # Initialize Superpoints
         pcl_to_samp = init_pcl if hyper_pcl is None else hyper_pcl
-        init_nodes_idx = FurthestSampling(pcl_to_samp.detach()[None], self.num_superpoints)[0]
+        init_nodes_idx = FurthestSampling(pcl_to_samp.detach()[None].cuda(), self.num_superpoints)[0].to(self.device)
         self.sp_points.data = init_pcl[init_nodes_idx]
         nn.init.constant_(self.sp_hyper_feature, 1e-2)
         scene_range = init_pcl.max() - init_pcl.min()
@@ -677,19 +692,18 @@ class SkeletonGaussianSplatting(GaussianSplatting):
             self._sp_radius.data = torch.log(.1 * scene_range + 1e-7) * scene_range.new_ones([self.num_superpoints])
         if self._sp_weight is not None:
             self._sp_weight.data = torch.zeros_like(self._sp_radius)
+        if return_nodes:
+            return self.sp_points[..., :3]
         opt = self._task.optimizer
-        self._xyz = self.change_optimizer(opt, self.sp_points, 'xyz', op='replace')['xyz']
-        names = ['_features_dc', '_features_rest', '_scaling', '_opacity', '_rotation']
-        if self.hyper_dim > 0:
-            names.append('hyper_feature')
         optimizable_tensors = self.change_optimizer(
-            opt, {self.param_names_map[name]: getattr(self, name)[init_nodes_idx] for name in names}, op='replace'
+            opt, {opt_name: getattr(self, name)[init_nodes_idx] for name, opt_name in self.param_names_map.items()},
+            op='replace'
         )
         for param_name, opt_name in self.param_names_map.items():
             if opt_name in optimizable_tensors:
                 setattr(self, param_name, optimizable_tensors[opt_name])
         opt.zero_grad(set_to_none=True)
-
+        self._xyz.data.copy_(self.sp_points[..., :3])
         self.active_sh_degree = 0
         self.xyz_gradient_accum = self.xyz_gradient_accum.new_zeros((len(self.points), 1))
         self.denom = self.denom.new_zeros((len(self.points), 1))
@@ -1333,7 +1347,6 @@ class SkeletonGaussianSplatting(GaussianSplatting):
 
     def loss_sp_arap(self, sp_se3: SE3):
         sp_points_c = self.sp_points[..., :3]
-        # sp_se3 = SE3.exp(sp_tr)
         sp_points_t = sp_se3.act(sp_points_c)
         with torch.no_grad():
             sp_dist = torch.cdist(sp_points_c, sp_points_c)
@@ -1368,8 +1381,8 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         nodes_t = self.sp_points[:, None, :3].detach() + node_trans.reshape(-1, t_samp_num, 3)  # M, T, 3
 
         # Calculate weights of nodes NN
-        nn_weight, nn_idx = self.calc_LBS_weight(self.sp_points, self.sp_points, self.sp_hyper_feature,
-                                                 self.sp_hyper_feature, K=K + 1)
+        nn_weight, nn_idx = self.calc_LBS_weight(
+            self.sp_points, self.sp_points, self.sp_hyper_feature, self.sp_hyper_feature, K=K + 1)
         nn_weight, nn_idx = nn_weight[:, 1:], nn_idx[:, 1:]  # M, K
 
         # Calculate edge deform loss
@@ -1476,8 +1489,8 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         losses['rgb'] = self.loss_funcs('image', image, gt_img)
         losses['ssim'] = self.loss_funcs('ssim', image, gt_img)
         if stage == 'sp' or stage == 'init':
-            losses['elastic'] = self.loss_funcs('elastic', self.loss_elastic, t, 1.0 / self.time_interval)
-            losses['acc'] = self.loss_funcs('acc', self.loss_acc, t, 3.0 / self.time_interval)
+            losses['elastic'] = self.loss_funcs('elastic', self.loss_elastic, t, self.time_interval)
+            losses['acc'] = self.loss_funcs('acc', self.loss_acc, t, 3.0 * self.time_interval)
             losses['arap'] = self.loss_funcs('arap', self.loss_arap)
             if self.canonical_net is not None and self._step <= max(self.canonical_replace_steps) + 5:
                 losses['c_net'] = self.loss_funcs('c_net', self.loss_canonical_net, outputs['points'][0], t, stage)
@@ -1803,7 +1816,9 @@ class SkeletonGaussianSplatting(GaussianSplatting):
     def hook_after_train_step(self):
         if self._step == self.stages['sp_fix'][0]:
             self.sp_points.data[:, :3] = self.points
-            self.create_from_pcd(self._task._pcd, self.lr_spatial_scale)  # noqa
+            super().create_from_pcd(self._task._pcd, self.lr_spatial_scale)  # noqa
+            self.hyper_feature = nn.Parameter(
+                torch.full([self._xyz.shape[0], self.hyper_dim], -1e-2, device=self.sp_points.device))
             self.to(self.sp_points.device)
             new_params = {v: getattr(self, k) for k, v in self.param_names_map.items()}
             if self.sp_W is not None:
@@ -1813,6 +1828,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
             new_params = self.change_optimizer(self._task.optimizer, new_params, op='replace')
             for param_name, opt_name in self.param_names_map.items():
                 setattr(self, param_name, new_params[opt_name])
+            self.active_sh_degree = 0
             self.training_setup()
             logging.info('Finish control points initialization')
             self._task.save_model('init.pth')
