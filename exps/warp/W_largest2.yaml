@@ -1,5 +1,5 @@
 __base__: '_base.yaml'
 arch_cfg:
     LBS_method: W
-    warp_method: LBS
-    sep_rot: true
+    warp_method: largest
+    sep_rot: false

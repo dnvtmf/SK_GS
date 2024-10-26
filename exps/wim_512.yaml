@@ -1,8 +1,13 @@
 exp_name: WIM512
 __base__: 'wim.yaml'
 arch_cfg:
+    LBS_method: weighted_kernel # 'W', 'dist', 'kernel', 'weighted_kernel'
+    warp_method: LBS_c # LBS_c, LBS, largest
     adaptive_control_cfg:
         sp_adjust_interval: [-1, 10_000, 20_000]
         sp_merge_interval: [-1, 20_000, 30_000]
+        init_opacity_reset_interval: [3000, 2000, -1]
+        init_densify_prune_interval: [100, 0, -1]
+
 dataset_cfg:
     image_size: [512, 512]

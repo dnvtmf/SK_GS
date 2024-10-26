@@ -19,7 +19,6 @@ arch_cfg:
     canonical_time_id: -1
     ## superpoints
     num_superpoints: 512
-    local_frame: true
     hyper_dim: 8
     sp_prune_threshold: 0.001
     sp_split_threshold: 0.0002
@@ -28,6 +27,7 @@ arch_cfg:
     is_blender: true
     init_sampling_step: 7500
     node_max_num_ratio_during_init: 16
+    sep_rot: false
     LBS_method: W
     warp_method: largest
     # get skeleton
@@ -61,6 +61,8 @@ arch_cfg:
         opacity_reset_interval: [3000, 3000, -1]
         densify_interval: [100, 500, 50_000]
         prune_interval: [100, 500, 50_000]
+        init_opacity_reset_interval: [3000, 0, -1]
+        init_densify_prune_interval: [100, 0, -1]
         
         densify_grad_threshold: 0.0002
         densify_percent_dense: 0.01

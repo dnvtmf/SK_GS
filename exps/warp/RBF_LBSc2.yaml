@@ -2,4 +2,4 @@ __base__: '_base.yaml'
 arch_cfg:
     LBS_method: kernel
     warp_method: LBS_c
-    sep_rot: true
+    sep_rot: false

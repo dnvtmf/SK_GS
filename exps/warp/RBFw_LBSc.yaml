@@ -1,6 +1,5 @@
-exp_name: warp
-log_suffix: RBFw_LBSc
-__base__: '../d_nerf.yaml'
+__base__: '_base.yaml'
 arch_cfg:
     LBS_method: weighted_kernel
     warp_method: LBS_c
+    sep_rot: true

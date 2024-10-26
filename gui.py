@@ -467,6 +467,7 @@ class SP_GS_GUI:
     def build_dataset_and_net(self):
         args = self.options()
         pth_path = Path(args.load)
+        assert args.load and pth_path.exists(), f"must load a model/checkpoint"
         cfg_path = args.config
         # scene = Path(pth_path).parts[-2]
         scene = args.scene

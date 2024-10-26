@@ -38,6 +38,6 @@ for ((i = 0; i < num_scenes; ++i)); do
   fi
   screen -S gpu${gpu_id} -p 0 -X stuff \
     "python3 test.py -c exps/${cfg_name} \
-        --load results/${out_dir}/${scenes[i]}/best.pth \
-        --scene ${scenes[i]} --load-no-strict ${test_args[*]} ^M"
+          --load results/${out_dir}/${scenes[i]}/best.pth \
+          --scene ${scenes[i]} --load-no-strict ${test_args[*]} ^M"
 done

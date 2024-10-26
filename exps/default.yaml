@@ -23,7 +23,7 @@ arch_cfg:
     canonical_replace_steps: [20_000]
     ## superpoints
     num_superpoints: 512
-    local_frame: true
+    sep_rot: true
     hyper_dim: 8
     sp_prune_threshold: 0.001
     sp_split_threshold: 0.0002
@@ -74,6 +74,8 @@ arch_cfg:
 
         sp_adjust_interval: [200, 10_000, 20_000]
         sp_merge_interval: [200, 20_000, 30_000]
+        init_opacity_reset_interval: [3000, 0, -1]
+        init_densify_prune_interval: [100, 0, -1]
     loss_cfg:
         default: 0.0
         ## both
@@ -84,9 +86,9 @@ arch_cfg:
         ## dynamic stage
         arap:
             lambda: 0
-            _values: [1.0e-2, 1.0e-2, 1.0e-4, 1.0e-4, 1.0e-5, 1.0e-5, 0]
-            _steps: [2000, 10000, 10000, 15000, 20000, 30000, 30001]
-            _vary: log
+        #    _values: [1.0e-2, 1.0e-2, 1.0e-4, 1.0e-4, 1.0e-5, 1.0e-5, 0]
+        #    _steps: [2000, 10000, 10000, 15000, 20000, 30000, 30001]
+        #    _vary: log
         joint: 1.0
         joint_all: 1.0
         jp_dist: 0.
@@ -103,14 +105,14 @@ arch_cfg:
         ## init stage
         acc:
             lambda: 0
-            _values: [0, 1.0e-5, 0]
-            _steps: [0, 10000, 10000]
-            _vary: fix
+            # _values: [0, 1.0e-5, 0]
+            # _steps: [0, 10000, 10000]
+            # _vary: fix
         elastic:
             lambda: 0
-            _values: [0, 1.0e-3, 0]
-            _steps: [0, 10000, 10000]
-            _vary: fix
+            # _values: [0, 1.0e-3, 0]
+            # _steps: [0, 10000, 10000]
+            # _vary: fix
         #        p_arap_ct_init: 1.0
 ## dataset
 num_init_points: 2_000

@@ -61,6 +61,8 @@ arch_cfg:
         opacity_reset_interval: [3000, 3000, -1]
         densify_interval: [100, 500, 50_000]
         prune_interval: [100, 500, 50_000]
+        init_opacity_reset_interval: [3000, 0, -1]
+        init_densify_prune_interval: [100, 0, -1]
         
         densify_grad_threshold: 0.0002
         densify_percent_dense: 0.01

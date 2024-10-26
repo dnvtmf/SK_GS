@@ -218,7 +218,7 @@ class DeformNetwork(nn.Module):
         pos_enc_t='freq',
         pos_enc_t_cfg: dict = None,
         is_blender=False,
-        local_frame=False,
+        sep_rot=False,
         resnet_color=True,
         color_wrt_dir=False,
         max_d_scale=-1,
@@ -272,13 +272,13 @@ class DeformNetwork(nn.Module):
         self.gaussian_scaling = nn.Linear(W, 3)
         self.gaussian_rotation = nn.Linear(W, 4)
 
-        self.local_frame = local_frame
-        if self.local_frame:
+        self.sep_rot = sep_rot
+        if self.sep_rot:
             self.local_rotation = nn.Linear(W, 4)
         self.reset_parameters()
 
     def reset_parameters(self):
-        if self.local_frame:
+        if self.sep_rot:
             nn.init.normal_(self.local_rotation.weight, mean=0, std=1e-4)
             nn.init.zeros_(self.local_rotation.bias)
 
@@ -312,8 +312,8 @@ class DeformNetwork(nn.Module):
         if self.max_d_scale > 0:
             scaling = torch.tanh(scaling) * np.log(self.max_d_scale)
         return_dict = {'d_xyz': d_xyz, 'd_rotation': rotation, 'd_scaling': scaling, 'hidden': h}
-        if self.local_frame:
-            return_dict['local_rotation'] = self.local_rotation(h)
+        if self.sep_rot:
+            return_dict['g_rotation'] = self.local_rotation(h)
         return return_dict
 
 
@@ -352,7 +352,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         # sp stage
         num_superpoints=512,
         hyper_dim=2,
-        local_frame=True,
+        sep_rot=True,  # separate rotation
         net_cfg=None,
         sp_prune_threshold=1e-3,
         sp_split_threshold=0.0002,
@@ -396,7 +396,9 @@ class SkeletonGaussianSplatting(GaussianSplatting):
             # node_force_densify_prune_step=10_000,
             # node_enable_densify_prune=False,
             sp_adjust_interval=[5000, 5000, 25000],
-            sp_merge_interval=[-1, 10_000, 20_000]
+            sp_merge_interval=[-1, 10_000, 20_000],
+            init_opacity_reset_interval=[3000, 0, -1],
+            init_densify_prune_interval=[100, 0, -1],
         )
         super().__init__(**kwargs, adaptive_control_cfg=adaptive_control_cfg)
         # train schedule
@@ -438,7 +440,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         self.init_num_times = init_num_times
         if use_canonical_net and self.canonical_time_id >= 0:
             self.canonical_net = DeformNetwork(
-                **utils.merge_dict(net_cfg, local_frame=local_frame, is_blender=is_blender, max_d_scale=max_d_scale)
+                **utils.merge_dict(net_cfg, sep_rot=sep_rot, is_blender=is_blender, max_d_scale=max_d_scale)
             )  # same to sk_deform_net
         else:
             self.canonical_net = None
@@ -446,7 +448,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         self.f_s = f_s
         self.annealing_steps = annealing_steps
 
-        self.local_frame = local_frame
+        self.sep_rot = sep_rot
 
         self.sp_prune_threshold = sp_prune_threshold
         self.sp_split_threshold = sp_split_threshold
@@ -471,7 +473,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         if self.LBS_method == 'weighted_kernel':
             self._sp_weight = nn.Parameter(torch.zeros(num_superpoints))
         self.sp_deform_net = DeformNetwork(
-            **utils.merge_dict(net_cfg, local_frame=local_frame, is_blender=is_blender, max_d_scale=max_d_scale))
+            **utils.merge_dict(net_cfg, sep_rot=sep_rot, is_blender=is_blender, max_d_scale=max_d_scale))
 
         assert warp_method in ['largest', 'LBS', 'LBS_c']
         self.warp_method = warp_method
@@ -483,7 +485,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         self.register_buffer('sp_is_init', torch.tensor(False))
         self.register_buffer('sp_weights', torch.empty(0, self.num_knn))  # [N, K]
         self.register_buffer('sp_knn', torch.empty(0, self.num_knn, dtype=torch.long))  # [N, K]
-        self.register_buffer('sp_cache', torch.empty(self.num_frames, self.num_superpoints, 14))
+        self.register_buffer('sp_cache', torch.empty(self.num_frames, self.num_superpoints, 14 if self.sep_rot else 10))
         self.node_max_num_ratio_during_init = node_max_num_ratio_during_init
 
         # Cached nn_weight to speed up
@@ -569,7 +571,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         assert self.num_frames == len(self.train_db_times)
         self.global_tr = nn.Parameter(torch.zeros(self.num_frames, 7))
         assert self.canonical_time_id < self.num_frames
-        self.sp_cache = torch.zeros(self.num_frames, M, 14)
+        self.sp_cache = torch.zeros(self.num_frames, M, 14 if self.sep_rot else 10)
         self.sk_cache = torch.zeros(self.num_frames, M, sum(self.sk_dims))
         self.time_interval = 1. / dataset.num_frames
 
@@ -596,7 +598,6 @@ class SkeletonGaussianSplatting(GaussianSplatting):
 
         params_groups.extend([
             {'params': list(self.sk_deform_net.parameters()), 'lr': lr, 'name': 'sk_deform'},
-            # {'params': [self.sk_W], 'lr': lr, 'name': 'sk_W'},
             {'params': [self.joint_pos], 'lr': lr, 'name': 'joint_pos'},
             {'params': [self.global_tr], 'lr': lr * 0, 'name': 'global_tr'},
             {'params': [self.joints], 'lr': lr * self.lr_joints, 'name': 'joints'},
@@ -663,7 +664,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         super().load_state_dict(state_dict, strict, **kwargs)
 
     @torch.no_grad()
-    def init_superpoints(self, force=False, use_hyper=True, points=None, return_nodes=False):
+    def init_superpoints(self, force=False, use_hyper=True, points=None, return_sp=False):
         if not self.training:
             return
         if self.sp_is_init and not force:
@@ -676,7 +677,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
             hyper_pcl = (trans_samp + points[:, None]).reshape(points.shape[0], -1)
         else:
             hyper_pcl = None
-        if self.canonical_net is None:
+        if return_sp or self.canonical_net is None:
             init_pcl = points
         else:
             init_pcl = self.sp_deform_net(points, self.train_db_times[self.canonical_time_id])['d_xyz'] + points
@@ -692,7 +693,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
             self._sp_radius.data = torch.log(.1 * scene_range + 1e-7) * scene_range.new_ones([self.num_superpoints])
         if self._sp_weight is not None:
             self._sp_weight.data = torch.zeros_like(self._sp_radius)
-        if return_nodes:
+        if return_sp:
             return self.sp_points[..., :3]
         opt = self._task.optimizer
         optimizable_tensors = self.change_optimizer(
@@ -786,17 +787,16 @@ class SkeletonGaussianSplatting(GaussianSplatting):
             - d_points: shape: [P, 3]
             - d_rotation: shape: [P, 4]
             - d_scale: shape: [P, 3]
-            - spT: The transformation matrix of superpoints, represented by quaternion, shape: [M, 4]
+            - sp_t: The transformation matrix of superpoints, represented by quaternion, shape: [M, 4]
         """
-        # get transformation matrix spT of superpoints
-        if sp_r is None:
+        if isinstance(sp_t, SE3):
+            sp_r = sp_t.vec()[..., 3:]
             spT = sp_t
         else:
+            assert sp_r is not None
             if method == 'LBS_c':
-                spR = SO3.InitFromVec(ops_3d.quaternion.normalize(sp_r))
-                spT = SE3.InitFromVec(torch.cat([sp_t + sp_points + spR.act(-sp_points), spR.vec()], dim=-1))
-            else:
-                spT = SE3.InitFromVec(torch.cat([sp_t, ops_3d.quaternion.normalize(sp_r)], dim=-1))
+                sp_t = sp_t + sp_points + SO3.InitFromVec(sp_r).act(-sp_points)
+            spT = SE3.InitFromVec(torch.cat([sp_t, sp_r], dim=-1))
 
         if isinstance(spT, Tensor):
             if method == 'LBS_c' or method == 'LBS':
@@ -810,7 +810,12 @@ class SkeletonGaussianSplatting(GaussianSplatting):
                 d_points = spT[self.p2sp].act(points) - points
         # else:
         #     d_points = (sp_t[indices] * weights[..., None]).sum(dim=1)
-        d_rotation = (sp_rot[indices] * weights[..., None]).sum(dim=1) if sp_rot is not None else None
+        if sp_rot is not None:
+            d_rotation = (sp_rot[indices] * weights[..., None]).sum(dim=1)
+        elif sp_r is not None:
+            d_rotation = (sp_r[indices] * weights[..., None]).sum(dim=1)
+        else:
+            d_rotation = None
         d_scales = (sp_scale[indices] * weights[..., None]).sum(dim=1) if sp_scale is not None else None
         if isinstance(spT, SE3):
             spT = spT.vec()
@@ -832,17 +837,17 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         else:
             weights, indices = self.calc_LBS_weight(points, sp_points, self.hyper_feature, self.sp_hyper_feature)
             outs = self.sp_deform_net(sp_points.detach(), t)
-        d_xyz, d_rot, d_scale = outs['d_xyz'], outs['d_rotation'], outs['d_scaling']
-        local_rot = outs['local_rotation'] + rot_bias
+        d_xyz, d_scale = outs['d_xyz'], outs['d_scaling']
+        d_rot = ops_3d.quaternion.normalize(outs['d_rotation'] + rot_bias)
+        g_rot = ops_3d.quaternion.normalize(outs['g_rotation'] + rot_bias) if self.sep_rot else None
 
         if self.warp_method == 'largest' and self.training:
             self.p2sp = torch.gather(indices, -1, weights.argmax(dim=-1, keepdim=True))[:, 0]
         d_points, d_rotation, d_scales, spT = self.warp(
-            points, sp_points,
-            d_xyz, local_rot, d_rot, d_scale,
+            points, sp_points, d_xyz, d_rot, g_rot, d_scale,
             weights, indices, self.warp_method
         )
-        return d_points, d_rotation, d_scales, spT, d_rot, d_scale, weights, indices
+        return d_points, d_rotation, d_scales, spT, g_rot, d_scale, weights, indices
 
     @torch.no_grad()
     def init_joint_pos(self, force=False):
@@ -933,7 +938,11 @@ class SkeletonGaussianSplatting(GaussianSplatting):
             tid = random.randrange(self.num_frames)
             t = self.train_db_times[tid]
             with torch.no_grad():
-                sp_tr, sp_d_rot, sp_d_scale = self.sp_cache[tid].split([7, 4, 3], dim=-1)
+                if self.sep_rot:
+                    sp_tr, sp_d_rot, sp_d_scale = self.sp_cache[tid].split([7, 4, 3], dim=-1)
+                else:
+                    sp_tr, sp_d_scale = self.sp_cache[tid].split([7, 3], dim=-1)
+                    sp_d_rot = sp_tr[:, 3:]
                 sp_tr = SE3.InitFromVec(sp_tr)
                 points_t1 = points_c + self.warp(
                     points_c, self.sp_points,
@@ -962,11 +971,14 @@ class SkeletonGaussianSplatting(GaussianSplatting):
             loss_meter.reset()
             for tid in range(self.num_frames):
                 t = self.train_db_times[tid]
-                sp_tr, sp_d_rot, sp_d_scale = self.sp_cache[tid].split([7, 4, 3], dim=-1)
+                if self.sep_rot:
+                    sp_tr, sp_d_rot, sp_d_scale = self.sp_cache[tid].split([7, 4, 3], dim=-1)
+                else:
+                    sp_tr, sp_d_scale = self.sp_cache[tid].split([7, 3], dim=-1)
+                    sp_d_rot = sp_tr[:, 3:]
                 sp_tr = SE3.InitFromVec(sp_tr)
                 points_t1 = points_c + self.warp(
-                    points_c, self.sp_points,
-                    sp_tr, None, None, None,
+                    points_c, self.sp_points, sp_tr, None, None, None,
                     self.sp_weights, self.sp_knn, self.warp_method
                 )[0]
                 d_xyz, _, _, sk_tr, sk_d_rot, sk_d_scale, _, _, _ = self.sk_stage(points_c, t, tid)
@@ -997,16 +1009,21 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         ## cache the data from sp stage
         for i in range(len(self.train_db_times)):
             out = self.sp_deform_net(self.sp_points, self.train_db_times[i].cuda().view(-1, 1))
-            d_xyz, local_rot, d_rot, d_scale = out['d_xyz'], out['local_rotation'], out['d_rotation'], out['d_scaling']
-            local_rot = ops_3d.quaternion.normalize(local_rot + local_rot.new_tensor([0., 0., 0., 1.]))
+            d_xyz, d_scale = out['d_xyz'], out['d_scaling']
+            rot_bias = d_xyz.new_tensor([0., 0., 0., 1.])
+            d_rot = ops_3d.quaternion.normalize(out['d_rotation'] + rot_bias)
             if self.warp_method == 'LBS_c':
-                spR = SO3.InitFromVec(local_rot)
+                spR = SO3.InitFromVec(d_rot)
                 spT = SE3.InitFromVec(torch.cat([d_xyz + self.sp_points + spR.act(-self.sp_points), spR.vec()], dim=-1))
             elif self.warp_method == 'LBS':
-                spT = SE3.InitFromVec(torch.cat([d_xyz, local_rot], dim=-1))
+                spT = SE3.InitFromVec(torch.cat([d_xyz, d_rot], dim=-1))
             else:  # elif self.warp_method == 'largest':
-                spT = SE3.InitFromVec(torch.cat([d_xyz, local_rot], dim=-1))
-            self.sp_cache[i] = torch.cat([spT.vec(), d_rot, d_scale], dim=-1)
+                spT = SE3.InitFromVec(torch.cat([d_xyz, d_rot], dim=-1))
+            if self.sep_rot:
+                g_rot = ops_3d.quaternion.normalize(out['g_rotation'] + rot_bias)
+                self.sp_cache[i] = torch.cat([spT.vec(), g_rot, d_scale], dim=-1)
+            else:
+                self.sp_cache[i] = torch.cat([spT.vec(), d_scale], dim=-1)
         self.sp_weights, self.sp_knn = self.calc_LBS_weight(
             self.points, self.sp_points, self.hyper_feature, self.sp_hyper_feature)
         ## init joint
@@ -1093,13 +1110,13 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         if not self.sk_is_init:
             sp_points = self.sp_points[..., :3]
             sp_out = self.sp_deform_net(sp_points, t)
-            local_rot = sp_out['local_rotation'] + sp_points.new_tensor([0, 0, 0, 1.])
-            local_rot = SO3.InitFromVec(ops_3d.quaternion.normalize(local_rot))
+            d_rot = ops_3d.quaternion.normalize(sp_out['d_rotation'] + sp_points.new_tensor([0, 0, 0, 1.]))
+            d_rot = SO3.InitFromVec(d_rot)
             if self.warp_method == 'LBS_c':
-                locat_t = local_rot.act(-sp_points) + sp_points + sp_out['d_xyz']
+                d_xyz = d_rot.act(-sp_points) + sp_points + sp_out['d_xyz']
             else:
-                locat_t = sp_out['d_xyz']
-            g_tr = SE3.InitFromVec(torch.cat([locat_t, local_rot.vec()], dim=-1))
+                d_xyz = sp_out['d_xyz']
+            g_tr = SE3.InitFromVec(torch.cat([d_xyz, d_rot.vec()], dim=-1))
         elif time_id is None:
             w, t1_idx, t2_idx = utils.get_interpolate_weight(self.train_db_times, t)
             g_tr = torch.lerp(self.global_tr[t1_idx], self.global_tr[t2_idx], w).view(-1)
@@ -1359,30 +1376,35 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         arap_ct_loss = (dist_c - dist_t).abs().mean()
         return loss, arap_ct_loss
 
-    def loss_arap(self, t=None, delta_t=0.05, t_samp_num=2):
+    def loss_arap(self, t=None, delta_t=0.05, t_samp_num=2, points: Tensor = None):
+        if points is None:
+            points = self.sp_points
         t = torch.rand([]).cuda() if t is None else t.squeeze() + delta_t * (torch.rand([]).cuda() - .5)
         t_samp = torch.rand(t_samp_num).cuda() * delta_t + t - .5 * delta_t
-        t_samp = t_samp[None, :, None].expand(self.num_superpoints, t_samp_num, 1)  # M, T, 1
-        x = self.sp_points[:, None, :].repeat(1, t_samp_num, 1).detach()
+        t_samp = t_samp[None, :, None].expand(points.shape[0], t_samp_num, 1)  # M, T, 1
+        x = points[:, None, :].repeat(1, t_samp_num, 1).detach()
         dx = self.sp_deform_net(x=x.reshape(-1, 3), t=t_samp.reshape(-1, 1))['d_xyz']
-        nodes_t = self.sp_points[:, None, :3].detach() + dx.reshape(-1, t_samp_num, 3)  # M, T, 3
+        nodes_t = points[:, None, :3].detach() + dx.reshape(-1, t_samp_num, 3)  # M, T, 3
         hyper_nodes = nodes_t[:, 0]  # M, 3
         ii, jj, knn, weight = cal_connectivity_from_points(hyper_nodes, K=10)  # connectivity of control nodes
         error = cal_arap_error(nodes_t.permute(1, 0, 2), ii, jj, knn)
         return error
 
-    def loss_elastic(self, t=None, delta_t=0.005, K=2, t_samp_num=8):
+    def loss_elastic(self, t=None, delta_t=0.005, K=2, t_samp_num=8, points: Tensor = None, hyper: Tensor = None):
+        if points is None:
+            points = self.sp_points
+            hyper = self.sp_hyper_feature
+        num_points = points.shape[0]
         # Calculate nodes translate
         t = torch.rand([]).cuda() if t is None else t.squeeze() + delta_t * (torch.rand([]).cuda() - .5)
         t_samp = torch.rand(t_samp_num).cuda() * delta_t + t - .5 * delta_t
-        t_samp = t_samp[None, :, None].expand(self.num_superpoints, t_samp_num, 1)
-        x = self.sp_points[:, None, :].repeat(1, t_samp_num, 1).detach()
+        t_samp = t_samp[None, :, None].expand(num_points, t_samp_num, 1)
+        x = points[:, None, :].repeat(1, t_samp_num, 1).detach()
         node_trans = self.sp_deform_net(x=x.reshape(-1, 3), t=t_samp.reshape(-1, 1))['d_xyz']
-        nodes_t = self.sp_points[:, None, :3].detach() + node_trans.reshape(-1, t_samp_num, 3)  # M, T, 3
+        nodes_t = points[:, None, :3].detach() + node_trans.reshape(-1, t_samp_num, 3)  # M, T, 3
 
         # Calculate weights of nodes NN
-        nn_weight, nn_idx = self.calc_LBS_weight(
-            self.sp_points, self.sp_points, self.sp_hyper_feature, self.sp_hyper_feature, K=K + 1)
+        nn_weight, nn_idx = self.calc_LBS_weight(points, points, hyper, hyper, K=K + 1)
         nn_weight, nn_idx = nn_weight[:, 1:], nn_idx[:, 1:]  # M, K
 
         # Calculate edge deform loss
@@ -1392,14 +1414,16 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         arap_loss = (edge_t_var * nn_weight).sum(dim=1).mean()
         return arap_loss
 
-    def loss_acc(self, t=None, delta_t=.005):
+    def loss_acc(self, t=None, delta_t=.005, points: Tensor = None):
+        if points is None:
+            points = self.sp_points
         # Calculate nodes translate
         t = torch.rand([]).cuda() if t is None else t.squeeze() + delta_t * (torch.rand([]).cuda() - .5)
         t = torch.stack([t - delta_t, t, t + delta_t])
-        t = t[None, :, None].expand(self.num_superpoints, 3, 1)
-        x = self.sp_points[:, None, :].repeat(1, 3, 1).detach()
+        t = t[None, :, None].expand(points.shape[0], 3, 1)
+        x = points[:, None, :].repeat(1, 3, 1).detach()
         node_trans = self.sp_deform_net(x=x.reshape(-1, 3), t=t.reshape(-1, 1))['d_xyz']
-        nodes_t = self.sp_points[:, None, :3].detach() + node_trans.reshape(-1, 3, 3)  # M, 3, 3
+        nodes_t = points[:, None, :3].detach() + node_trans.reshape(-1, 3, 3)  # M, 3, 3
         acc = (nodes_t[:, 0] + nodes_t[:, 2] - 2 * nodes_t[:, 1]).norm(dim=-1)  # M
         acc = acc / (acc.detach() + 1e-5)
         acc_loss = acc.mean()
@@ -1422,17 +1446,26 @@ class SkeletonGaussianSplatting(GaussianSplatting):
 
     def loss_guided_sk(self, losses, time_id, outputs):
         sp_tr = self.sp_cache[time_id]
+        if self.sep_rot:
+            sp_d_tr, sp_d_rot, sp_d_scale = sp_tr.split([7, 4, 3], dim=-1)
+        else:
+            sp_d_tr, sp_d_scale = sp_tr.split([7, 3], dim=-1)
+            sp_d_rot = sp_d_tr[:, 3:]
         sk_tr, sk_d_rot, sk_d_scale = outputs['_skT'].squeeze(0), outputs['_sk_rot'], outputs['_sk_scale']
 
-        guided_loss = (SE3.InitFromVec(sp_tr[:, :7]).inv() * SE3.InitFromVec(sk_tr)).log().norm(dim=-1).mean()
+        guided_loss = (SE3.InitFromVec(sp_d_tr).inv() * SE3.InitFromVec(sk_tr)).log().norm(dim=-1).mean()
         losses['cmp_t'] = self.loss_funcs('cmp_t', guided_loss)
-        losses['cmp_r'] = self.loss_funcs('cmp_r', F.mse_loss, sk_d_rot.squeeze(0), sp_tr[:, 7:11])
-        losses['cmp_s'] = self.loss_funcs('cmp_s', F.mse_loss, sk_d_scale.squeeze(0), sp_tr[:, 11:14])
+        losses['cmp_r'] = self.loss_funcs('cmp_r', F.mse_loss, sk_d_rot.squeeze(0), sp_d_rot)
+        losses['cmp_s'] = self.loss_funcs('cmp_s', F.mse_loss, sk_d_scale.squeeze(0), sp_d_scale)
 
     def loss_guided_sk_v2(self, losses, time_id, outputs):
         sk_d_xyz, sk_d_rot, sk_d_scale = outputs['_d_xyz'], outputs['_d_rot'], outputs['_d_scale']
         with torch.no_grad():
-            sp_tr, sp_d_rot, sp_d_scale = self.sp_cache[time_id].split([7, 4, 3], dim=-1)
+            if self.sep_rot:
+                sp_tr, sp_d_rot, sp_d_scale = self.sp_cache[time_id].split([7, 4, 3], dim=-1)
+            else:
+                sp_tr, sp_d_scale = self.sp_cache[time_id].split([7, 3], dim=-1)
+                sp_d_rot = sp_tr[:, 3:]
             sp_weights, sp_knn = self.sp_weights, self.sp_knn
             points = self.points
             if self.warp_method == 'LBS' or self.warp_method == 'LBS_c':
@@ -1488,17 +1521,27 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         image, gt_img = image.view(1, H, W, C), gt_img.view(1, H, W, C)
         losses['rgb'] = self.loss_funcs('image', image, gt_img)
         losses['ssim'] = self.loss_funcs('ssim', image, gt_img)
-        if stage == 'sp' or stage == 'init':
+        if stage == 'sp':
             losses['elastic'] = self.loss_funcs('elastic', self.loss_elastic, t, self.time_interval)
             losses['acc'] = self.loss_funcs('acc', self.loss_acc, t, 3.0 * self.time_interval)
             losses['arap'] = self.loss_funcs('arap', self.loss_arap)
+        if stage == 'sp' or stage == 'init':
             if self.canonical_net is not None and self._step <= max(self.canonical_replace_steps) + 5:
                 losses['c_net'] = self.loss_funcs('c_net', self.loss_canonical_net, outputs['points'][0], t, stage)
         if stage == 'init':
+            if self.points.shape[0] <= self.num_superpoints:
+                points, hyper = self.points, self.hyper_feature
+            else:
+                index = torch.randperm(self.points.shape[0], device=self.device)[:self.num_superpoints]
+                points, hyper = self.points[index], self.hyper_feature[index]
+            losses['elastic'] = self.loss_funcs('elastic', self.loss_elastic, t, self.time_interval, points=points,
+                                                hyper=hyper)
+            losses['acc'] = self.loss_funcs('acc', self.loss_acc, t, 3.0 * self.time_interval, points=points)
+            losses['arap'] = self.loss_funcs('arap', self.loss_arap, points=points)
             losses['arap_p'] = self.loss_funcs('p_arap_ct_init', self.loss_points_arap, outputs['points'][0])
         if stage == 'sp' and self.training:
             with torch.no_grad():
-                cache = torch.cat([outputs['_spT'], outputs['_sp_rot'], outputs['_sp_scale']], dim=-1)
+                cache = torch.cat([outputs[k] for k in ['_spT', '_sp_rot', '_sp_scale'] if k in outputs], dim=-1)
                 self.sp_cache[time_id] = cache.squeeze(0)
             self.loss_reconstruct(losses, outputs)
         if stage == 'sp' and self.loss_funcs.w('joint') > 0 and self._step >= self.joint_update_interval[1]:
@@ -1514,7 +1557,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
                 joints = ops_3d.apply(self.joint_pos[a, b], spT[b])
                 jd_dist = F.mse_loss(joints, sp_points_t[a]) + F.mse_loss(joints, sp_points_t[b])
                 losses['jp_dist'] = self.loss_funcs('jp_dist', jd_dist)
-        if stage == 'sp' and self._step >= self.loss_arap_start_step:
+        if stage == 'sp' and self._step >= self.loss_arap_start_step >= 0:
             if self.loss_funcs.w('sp_arap_t') > 0:
                 arap_t, arap_ct = self.loss_sp_arap(SE3.InitFromVec(outputs['_spT'][0]))
                 losses['arap_t'] = self.loss_funcs('sp_arap_t', arap_t)
@@ -1522,7 +1565,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         if stage == 'sp' or stage == 'sk':
             losses['sparse'] = self.loss_funcs('sparse', self.loss_weight_sparsity, outputs['_knn_w'])
             losses['smooth'] = self.loss_funcs('smooth', self.loss_weight_smooth, outputs['_knn_w'][0])
-        if stage == 'sp' and self._step > self.guided_step_start:
+        if stage == 'sp' and self._step > self.guided_step_start >= 0:
             self.loss_guided_sp(losses, time_id, outputs, inputs['t'])
         if stage == 'sk_init' and self.training:
             # self.loss_guided_sk(losses, time_id, outputs)
@@ -1670,9 +1713,22 @@ class SkeletonGaussianSplatting(GaussianSplatting):
     def superpoint_merge(self, optimizer: torch.optim.Optimizer):
         M = self.num_superpoints
         for i, t in enumerate(self.train_db_times):
-            out = self.sp_deform_net(self.sp_points, t)
-            d_xyz, local_rot, d_rot, d_scale = out['d_xyz'], out['local_rotation'], out['d_rotation'], out['d_scaling']
-            self.sp_cache[i] = torch.cat([d_xyz, local_rot, d_rot, d_scale], dim=-1)
+            outs = self.sp_deform_net(self.sp_points, t)
+            d_xyz, d_scale = outs['d_xyz'], outs['d_scaling']
+            rot_bias = d_xyz.new_tensor([0, 0, 0, 1.])
+            d_rot = ops_3d.quaternion.normalize(outs['d_rotation'] + rot_bias)
+            if self.warp_method == 'LBS_c':
+                spR = SO3.InitFromVec(d_rot)
+                spT = SE3.InitFromVec(torch.cat([d_xyz + self.sp_points + spR.act(-self.sp_points), spR.vec()], dim=-1))
+            elif self.warp_method == 'LBS':
+                spT = SE3.InitFromVec(torch.cat([d_xyz, d_rot], dim=-1))
+            else:  # elif self.warp_method == 'largest':
+                spT = SE3.InitFromVec(torch.cat([d_xyz, d_rot], dim=-1))
+            if self.sep_rot:
+                g_rot = ops_3d.quaternion.normalize(outs['g_rotation'] + rot_bias)
+                self.sp_cache[i] = torch.cat([spT.vec(), g_rot, d_scale], dim=-1)
+            else:
+                self.sp_cache[i] = torch.cat([spT.vec(), d_scale], dim=-1)
 
         dist = torch.cdist(self.sp_points, self.sp_points[..., :3])  # [N, M]
         knn = torch.topk(dist, k=min(self.num_superpoints, self.num_knn + 1), dim=-1, largest=False)[1][:, 1:]
@@ -1872,8 +1928,8 @@ class SkeletonGaussianSplatting(GaussianSplatting):
                 radii = radii.amax(dim=0)
             mask = radii > 0
             self.add_densification_stats(outputs['viewspace_points'], mask)
-            if step % self.adaptive_control_cfg['densify_interval'][0] == 0 or \
-                step == self.stages['init_fix'][1] - 1:
+            # if step % self.adaptive_control_cfg['densify_interval'][0] == 0 or step == self.stages['init_fix'][1] - 1:
+            if utils.check_interval_v2(step, *self.adaptive_control_cfg['init_densify_prune_interval']):
                 size_threshold = 20 if step > self.adaptive_control_cfg['opacity_reset_interval'][0] else None
                 if self.sp_deform_net.is_blender:
                     grad_max = self.adaptive_control_cfg['densify_grad_threshold']
@@ -1887,8 +1943,9 @@ class SkeletonGaussianSplatting(GaussianSplatting):
                 self.prune(optimizer, self.adaptive_control_cfg['prune_opacity_threshold'],
                            self.cameras_extent, size_threshold, self.adaptive_control_cfg['prune_percent_dense'])
                 logging.info(f'Node after densify and prune, there are {len(self.points)} points at step {step}')
-            if (step >= 100 and (step - 1) % self.adaptive_control_cfg['opacity_reset_interval'][0] == 0) or \
-                (self.background_type == 'white' and step == self.adaptive_control_cfg['densify_interval'][1]):
+            # if (step >= 100 and (step - 1) % self.adaptive_control_cfg['opacity_reset_interval'][0] == 0) or \
+            #     (self.background_type == 'white' and step == self.adaptive_control_cfg['densify_interval'][1]):
+            if utils.check_interval_v2(step, *self.adaptive_control_cfg['init_opacity_reset_interval']):
                 self.reset_opacity(optimizer)
                 logging.info(f'reset opacity at init step {step}')
         elif step == self.init_sampling_step:

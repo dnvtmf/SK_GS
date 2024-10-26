@@ -4,14 +4,15 @@ ROOT=$(
   cd $(dirname $0)/..
   pwd
 )
-scenes=(hellwarrior hook jumpingjacks mutant standup trex) # bouncingballs lego
+#scenes=(hellwarrior hook jumpingjacks mutant standup trex) # bouncingballs lego
+scenes=(atlas baxter spot cassie iiwa nao pandas)
 gpus=(0 1 2 3 4 5 6 7 8)
 args=()
 num_scenes=${#scenes[@]}
 num_gpus=${#gpus[@]}
 echo "There are ${num_gpus} gpus and ${num_scenes} scenes"
 #ablation_case=num_sp
-#ablation_case=warp
+ablation_case=warp
 #ablation_case=sp_control
 #ablation_case=num_knn
 #ablation_case=lr_deform
@@ -20,7 +21,7 @@ echo "There are ${num_gpus} gpus and ${num_scenes} scenes"
 #ablation_case=loss_smooth
 #ablation_case=loss_joint
 #ablation_case=loss_cmp_p
-ablation_case=loss_cmp_t
+#ablation_case=loss_cmp_t
 
 for ((i = 0; i < ${num_gpus}; ++i)); do
   gpu_id="gpu${gpus[$i]}"
@@ -51,16 +52,17 @@ for ((i = 0; i < num_scenes; ++i)); do
       continue
     fi
     gpu_id=${gpus[$((k % num_gpus))]}
-    echo "use gpu${gpu_id} on scene: ${scenes[i]} for exp: ${ablation_case}/${exp} "
+    name=${exp%%.yaml}
     screen -S gpu${gpu_id} -p 0 -X stuff "^M"
-    if [[ ! -e results/${ablation_case}/${scenes[i]}/${exp%%.yaml}/last.pth ]]; then
+    if [[ ! -e results/${ablation_case}/${scenes[i]}/${name}/last.pth ]]; then
+      echo "use gpu${gpu_id} on scene: ${scenes[i]} for exp: ${ablation_case}/${exp} "
       screen -S gpu${gpu_id} -p 0 -X stuff \
-        "python3 train.py -c exps/${ablation_case}/${exp} --scene=${scenes[i]} ${args[*]} ^M"
+        "python3 train.py -c exps/${ablation_case}/${exp} --log-suffix ${name} --scene=${scenes[i]} ${args[*]} ^M"
     fi
-    if [[ ! -e results/${ablation_case}/${scenes[i]}/${exp%%.yaml}/results.json ]]; then
+    if [[ ! -e results/${ablation_case}/${scenes[i]}/${name}/results.json ]]; then
       screen -S gpu${gpu_id} -p 0 -X stuff \
-        "python3 test.py -c exps/${ablation_case}/${exp} \
-          --load results/${ablation_case}/${scenes[i]}/${exp%%.yaml}/last.pth \
+        "python3 test.py -c exps/${ablation_case}/${exp}  --log-suffix ${name} \
+          --load results/${ablation_case}/${scenes[i]}/${name}/last.pth \
           --scene ${scenes[i]} --load-no-strict ${test_args[*]} ^M"
     fi
     k=$((k + 1))
