@@ -224,7 +224,7 @@ class WatchItMoveDataset(NERF_Base_Dataset):
     def extra_repr(self):
         s = [
             f"image size{'' if self.downscale is None else f'↓{self.downscale}'}="
-            f"{self.image_size[0]} x {self.image_size[1]}, focal={utils.float2str(self.focal)}",
+            f"{self.image_size[0]} x {self.image_size[1]}",
             f"background={self.background_type}",
             f"frames: [{':'.join(str(i) for i in self.frame_ranges)}], "
             f"num_frames: {self.num_frames}, num_cameras: {self.num_cameras}",

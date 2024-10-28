@@ -90,7 +90,7 @@ class DNeRFDataset(NERF_Base_Dataset):
             paths = sorted(list(root.joinpath(img_dir).glob('*' + img_suffix)))
             self.Tv2w, self.Tv2s, self.Ts = self.load_camera_from_npz(
                 root.joinpath(camera_file), [int(p.stem) for p in paths])
-            self.focal = self.Tv2s[0, 0, 0]
+            self.focal = self.Tv2s[..., 0, 0]
             # self.Ts2v = torch.inverse(self.Tv2s)
             times = None
         else:
@@ -236,7 +236,7 @@ class DNeRFDataset(NERF_Base_Dataset):
         inputs = {}
         if self.with_rays:
             rays = ops_3d.get_rays(Tv2s, self.Tv2w[index], size=self.image_size, normalize=True, offset=0.5,
-                sample_stride=s)
+                                   sample_stride=s)
             inputs['rays_o'] = rays[0]
             inputs['rays_d'] = rays[1]
         image = self.images[index, ::s, ::s]
@@ -277,7 +277,7 @@ class DNeRFDataset(NERF_Base_Dataset):
             f"mask_dir: {self.mask_dir}, mask_suffix: {self.mask_suffix}" if self.mask_suffix else None,
             f"camera_file: {self.camera_file}, coord system: {self.coord_src}→{self.coord_dst}",
             f"image size{'' if self.downscale is None else f'↓{self.downscale}'}="
-            f"{self.image_size[0]} x {self.image_size[1]}, focal={utils.float2str(self.focal)}, split: {self.split}",
+            f"{self.image_size[0]} x {self.image_size[1]}, split: {self.split}",
             f"background={self.background_type}",
             f"camera_radiu_scale={self.camera_radiu_scale}" if self.camera_radiu_scale != 1.0 else None,
             f"camera noise: {self.camera_noise}" if self.camera_noise != (0., 0.) else None,

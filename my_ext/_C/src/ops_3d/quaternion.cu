@@ -1,30 +1,29 @@
 #include "ops_3d.h"
 #include "util.cuh"
-#include "glm_helper.hpp"
-#include <glm/glm.hpp>
-#include <glm/gtc/quaternion.hpp>
 namespace OPS_3D {
+
+template <typename T>
+__forceinline__ __host__ __device__ void quaternion_to_R_forward_function(const T *__restrict__ q, T *__restrict__ R) {
+  T x = q[0], y = q[1], z = q[2], w = q[3];
+  T norm = x * x + y * y + z * z + w * w;
+  norm   = T(1.) / max(sqrt(norm), T(1e-12));
+  x = x * norm, y = y * norm, z = z * norm, w = w * norm;
+
+  R[0] = 1 - 2 * (y * y + z * z);
+  R[1] = 2 * (x * y - z * w);
+  R[2] = 2 * (y * w + x * z);
+  R[3] = 2 * (x * y + z * w);
+  R[4] = 1 - 2 * (x * x + z * z);
+  R[5] = 2 * (y * z - x * w);
+  R[6] = 2 * (x * z - y * w);
+  R[7] = 2 * (x * w + y * z);
+  R[8] = 1 - 2 * (x * x + y * y);
+}
 
 template <typename T>
 __global__ void quaternion_to_R_forward_kernel(int N, const T *__restrict__ q, T *__restrict__ R) {
   int idx = threadIdx.x + blockIdx.x * blockDim.x;
-  if (idx < N) {
-    q      = q + idx * 4;
-    R      = R + idx * 9;
-    T norm = q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3];
-    norm   = T(1.) / max(sqrt(norm), T(1e-12));
-    T x = q[0] * norm, y = q[1] * norm, z = q[2] * norm, w = q[3] * norm;
-
-    R[0] = 1 - 2 * (y * y + z * z);
-    R[1] = 2 * (x * y - z * w);
-    R[2] = 2 * (y * w + x * z);
-    R[3] = 2 * (x * y + z * w);
-    R[4] = 1 - 2 * (x * x + z * z);
-    R[5] = 2 * (y * z - x * w);
-    R[6] = 2 * (x * z - y * w);
-    R[7] = 2 * (x * w + y * z);
-    R[8] = 1 - 2 * (x * x + y * y);
-  }
+  if (idx < N) quaternion_to_R_forward_function(q + idx * 4, R + idx * 9);
 }
 
 Tensor quaternion_to_R_forward(const Tensor &q) {
@@ -38,23 +37,18 @@ Tensor quaternion_to_R_forward(const Tensor &q) {
   Tensor R = q.new_zeros(shape);
 
   if (N == 0) return R;
-  if (q.is_cuda()) {
-    AT_DISPATCH_FLOATING_TYPES_AND_HALF(q.scalar_type(), "quaternion_to_R_forward", [&] {
-      quaternion_to_R_forward_kernel KERNEL_ARG(div_round_up(N, 256), 256)(
-          N, q.contiguous().data_ptr<scalar_t>(), R.data_ptr<scalar_t>());
+  AT_DISPATCH_FLOATING_TYPES_AND_HALF(q.scalar_type(), "quaternion_to_R_forward", [&] {
+    auto q_ptr = q.contiguous().data_ptr<scalar_t>();
+    auto o_ptr = R.data_ptr<scalar_t>();
+    if (q.is_cuda()) {
+      quaternion_to_R_forward_kernel KERNEL_ARG(div_round_up(N, 256), 256)(N, q_ptr, o_ptr);
       CHECK_CUDA_ERROR("quaternion_to_R_forward_kernel");
-    });
-  } else {
-    AT_DISPATCH_FLOATING_TYPES_AND_HALF(q.scalar_type(), "quaternion_to_R_forward", [&] {
-      auto q_ptr = q.contiguous().data_ptr<scalar_t>();
-      auto o_ptr = R.data_ptr<scalar_t>();
+    } else {
       for (int i = 0; i < N; ++i) {
-        glm::qua qi(q_ptr[i * 4 + 0], q_ptr[i * 4 + 1], q_ptr[i * 4 + 2], q_ptr[i * 4 + 3]);
-        GLMTypes<scalar_t>::mat3 matrix = glm::mat3_cast(glm::normalize(qi));  // NOTE: xyzw format
-        mat3_copy_to(matrix, o_ptr + i * 9);
+        quaternion_to_R_forward_function<scalar_t>(q_ptr + i * 4, o_ptr + i * 9);
       }
-    });
-  }
+    }
+  });
   return R;
 }
 

@@ -498,6 +498,7 @@ class GaussianSplatting(nn.Module):
         num_points = self._xyz.shape[0]
         self.xyz_gradient_accum.data = self._xyz.new_zeros((num_points, 1))
         self.denom.data = self._xyz.new_zeros((num_points, 1))
+        self.max_radii2D.data = self.max_radii2D.new_zeros((num_points))
 
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         if isinstance(viewspace_point_tensor, Tensor):

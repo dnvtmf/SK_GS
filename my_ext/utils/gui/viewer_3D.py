@@ -20,8 +20,9 @@ class Viewer3D(ImageViewer):
 
         self.renderer = renderer
         self.fovy = math.radians(60.)
-        self.Tv2s = ops_3d.camera_intrinsics(size=size, fovy=self.fovy)
-        self.Ts2v = ops_3d.camera_intrinsics(size=size, fovy=self.fovy, inv=True)
+        fov = [ops_3d.fovx_to_fovy(self.fovy, size[1] / size[0]), self.fovy]
+        self.Tv2s = ops_3d.camera_intrinsics(size=size, fov=fov)
+        self.Ts2v = ops_3d.camera_intrinsics(size=size, fov=fov, inv=True)
 
         self.up = torch.tensor([0, 1., 0.])
         self.eye = torch.tensor([0., 0., 2.0])
@@ -133,8 +134,9 @@ class Viewer3D(ImageViewer):
 
     def set_fovy(self, fovy=60.):
         self.fovy = math.radians(fovy)
-        self.Tv2s = ops_3d.camera_intrinsics(size=self.size, fovy=self.fovy)
-        self.Ts2v = ops_3d.camera_intrinsics(size=self.size, fovy=self.fovy, inv=True)
+        fov = [ops_3d.fovx_to_fovy(self.fovy, self.size[1] / self.size[0]), self.fovy]
+        self.Tv2s = ops_3d.camera_intrinsics(size=self.size, fov=fov)
+        self.Ts2v = ops_3d.camera_intrinsics(size=self.size, fov=fov, inv=True)
         self.need_update = True
 
     def set_pose(self, eye=None, at=None, up=None, Tw2v=None, Tv2w=None):

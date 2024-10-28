@@ -17,13 +17,12 @@ arch_cfg:
         sk_init: 0
         sk_fix: 0
         sk: 40_000
-    num_knn: 4
+    num_knn: 5
     canonical_time_id: 0
     use_canonical_net: True
     canonical_replace_steps: [20_000]
     ## superpoints
     num_superpoints: 512
-    sep_rot: true
     hyper_dim: 8
     sp_prune_threshold: 0.001
     sp_split_threshold: 0.0002
@@ -33,7 +32,8 @@ arch_cfg:
     init_sampling_step: 7500
     node_max_num_ratio_during_init: 16
     LBS_method: W # 'W', 'dist', 'kernel', 'weighted_kernel'
-    warp_method: largest # LBS_c, LBS, largest
+    warp_method: LBS # LBS_c, LBS, largest
+    sep_rot: false
     # get skeleton
     joint_update_interval: [1_000, 20_000, 40_000]
     sk_momentum: 0.9
@@ -82,7 +82,7 @@ arch_cfg:
         image: {method: l1, lambda: 0.8}
         ssim: 0.2
         sparse: 0.3
-        smooth: 0 # .1
+        smooth: 0.1
         ## dynamic stage
         arap:
             lambda: 0

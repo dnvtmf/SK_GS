@@ -51,7 +51,10 @@ class NERF_Base_Dataset(Dataset):
             else:
                 self.FoV = torch.tensor([fovx, fovy], dtype=torch.float)
         if self.focal is None:
-            self.focal = ops_3d.fov_to_focal(self.FoV[..., 1], self.image_size[1])
+            self.focal = torch.stack([
+                ops_3d.fov_to_focal(self.FoV[..., 0], self.image_size[0]),
+                ops_3d.fov_to_focal(self.FoV[..., 1], self.image_size[1])
+            ], dim=-1)
 
         if self.Tv2w is None:
             assert self.Tw2v is not None

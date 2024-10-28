@@ -4,15 +4,15 @@ ROOT=$(
   cd $(dirname $0)/..
   pwd
 )
-#scenes=(hellwarrior hook jumpingjacks mutant standup trex) # bouncingballs lego
-scenes=(atlas baxter spot cassie iiwa nao pandas)
+scenes=(hellwarrior hook jumpingjacks mutant standup trex) # bouncingballs lego
+#scenes=(atlas baxter spot cassie iiwa nao pandas)
 gpus=(0 1 2 3 4 5 6 7 8)
 args=()
 num_scenes=${#scenes[@]}
 num_gpus=${#gpus[@]}
 echo "There are ${num_gpus} gpus and ${num_scenes} scenes"
-#ablation_case=num_sp
-ablation_case=warp
+ablation_case=num_sp
+#ablation_case=warp
 #ablation_case=sp_control
 #ablation_case=num_knn
 #ablation_case=lr_deform

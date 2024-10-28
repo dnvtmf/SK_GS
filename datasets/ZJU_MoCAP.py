@@ -249,7 +249,6 @@ class ZJU_MoCAP_Dataset_pickled(NERF_Base_Dataset):
         image_size=512,
         compression=True,
         background='none',
-        use_perspective_v2=False,
         near=0.1,
         far=1000,
         with_rays=True,
@@ -350,16 +349,16 @@ class ZJU_MoCAP_Dataset_pickled(NERF_Base_Dataset):
         self.downscale = img_scale
 
         self.Tv2w = torch.from_numpy(np.array(poses)).to(torch.float32)
-        self.Tv2s = torch.from_numpy(np.array(intrinsics))
+        self.Tv2s = torch.from_numpy(np.array(intrinsics)).to(torch.float32)
 
         fx, fy, cx, cy = self.Tv2s[:, 0, 0], self.Tv2s[:, 1, 1], self.Tv2s[:, 0, 2], self.Tv2s[:, 1, 2]
         fovx = ops_3d.focal_to_fov(fx, self.image_size[0])
         fovy = ops_3d.focal_to_fov(fy, self.image_size[1])
-        self.FoV = torch.stack([fovx, fovy], dim=-1).float()
+        self.FoV = torch.stack([fovx, fovy], dim=-1).to(torch.float32)
 
         self.Tv2w = ops_3d.convert_coord_system(self.Tv2w, self.coord_src, self.coord_dst, inverse=True)
-
-        self.Tv2c = ops_3d.perspective(self.image_size, fx, fy, cx, cy, n=near, f=far)
+        self.Tv2c = ops_3d.perspective2(size=self.image_size, focals=torch.stack([fx, fy], dim=-1),
+                                        pp=torch.stack([cx, cy], dim=-1), n=near, f=far)
         self.scene_size = 2.6
         self.scene_center = 0  # [-1.3, 1.3]
         self.complete_transform_matrices(near=near, far=far)
@@ -391,7 +390,7 @@ class ZJU_MoCAP_Dataset_pickled(NERF_Base_Dataset):
         targets = {'images': pixels}
         infos = {
             'Tw2v': self.Tw2v[cam_idx],
-            'Tw2c': self.Tv2c,
+            'Tv2c': self.Tv2c,
             'size': self.image_size,
             'index': img_idx,
             'campos': self.Tv2w[cam_idx, :3, 3],
@@ -423,7 +422,7 @@ class ZJU_MoCAP_Dataset_pickled(NERF_Base_Dataset):
         image = self.images[index, ::s, ::s].float() / 255.  # [1, H, W, C]
         infos = {
             'Tw2v': self.Tw2v[cam_idx],
-            'Tw2c': self.Tv2c[cam_idx] @ self.Tw2v[cam_idx],
+            'Tv2c': self.Tv2c[cam_idx],
             'Tv2s': Tv2s,
             'size': (image.shape[-2], image.shape[-3]),
             'index': index,

@@ -366,6 +366,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         node_max_num_ratio_during_init=16,
         init_num_times=16,
         init_sampling_step=7500,
+        init_sp_from='inputs',
         joint_init_steps=0,
         # sp->sk
         sk_re_init_gs=False,
@@ -534,6 +535,9 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         self.scales_all_same = True
         self.time_interval = 0.05
         self.loss_arap_start_step = loss_arap_start_step
+        assert init_sp_from in ['inputs', 'sampled', 'before']
+        self.init_sp_from = init_sp_from
+        self.init_sp_temp = []
 
     def reset_parameters(self):
         for m in self.sk_deform_net.dynamic_net.last:
@@ -630,10 +634,12 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         return
 
     def create_from_pcd(self, pcd: BasicPointCloud, lr_spatial_scale: float = None):
-        points = self.init_superpoints(True, False, torch.from_numpy(pcd.points.astype(np.float32)), True)
-        points = points.detach().cpu().numpy()
-        new_pcd = BasicPointCloud(points, SH2RGB(np.zeros_like(points)), np.zeros_like(points))
-        super().create_from_pcd(new_pcd, lr_spatial_scale)
+        if self.init_sp_from == 'inputs':
+            self.init_sp_temp = [pcd]
+        # points = self.init_superpoints(True, False, torch.from_numpy(pcd.points.astype(np.float32)), True)
+        # points = points.detach().cpu().numpy()
+        # pcd = BasicPointCloud(points, SH2RGB(np.zeros_like(points)), np.zeros_like(points))
+        super().create_from_pcd(pcd, lr_spatial_scale)
         N = len(self._xyz)
         self.hyper_feature = nn.Parameter(torch.full([N, self.hyper_dim], -1e-2, device=self.device))
         if self.sp_W is not None:
@@ -1872,10 +1878,19 @@ class SkeletonGaussianSplatting(GaussianSplatting):
     def hook_after_train_step(self):
         if self._step == self.stages['sp_fix'][0]:
             self.sp_points.data[:, :3] = self.points
-            super().create_from_pcd(self._task._pcd, self.lr_spatial_scale)  # noqa
+            if self.init_sp_from == 'inputs':  # use input points to initialize GS
+                super().create_from_pcd(self.init_sp_temp[0], self.lr_spatial_scale)  # noqa
+                self.to(self.sp_points.device)
+            elif self.init_sp_from == 'before':  # use the gaussians at init_sa
+                for i, name in enumerate(['_xyz', '_features_dc', '_scaling', '_rotation', '_opacity']):
+                    setattr(self, name, nn.Parameter(self.init_sp_temp[i]))
+                self._features_rest = nn.Parameter(self._features_rest.new_zeros(
+                    self._xyz.shape[0], *self._features_rest.shape[1:])
+                )
+
             self.hyper_feature = nn.Parameter(
                 torch.full([self._xyz.shape[0], self.hyper_dim], -1e-2, device=self.sp_points.device))
-            self.to(self.sp_points.device)
+            self.init_sp_temp = []
             new_params = {v: getattr(self, k) for k, v in self.param_names_map.items()}
             if self.sp_W is not None:
                 _, p2sp = my_ext.cdist_top(self.points, self.joints)
@@ -1949,6 +1964,9 @@ class SkeletonGaussianSplatting(GaussianSplatting):
                 self.reset_opacity(optimizer)
                 logging.info(f'reset opacity at init step {step}')
         elif step == self.init_sampling_step:
+            if self.init_sp_from == 'before':
+                self.init_sp_temp = [getattr(self, name).clone() for name in
+                                     ['_xyz', '_features_dc', '_scaling', '_rotation', '_opacity']]
             self.init_superpoints(True, True)
             optimizer.zero_grad(set_to_none=True)
 

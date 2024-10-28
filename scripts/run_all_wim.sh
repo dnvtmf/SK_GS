@@ -6,7 +6,7 @@ ROOT=$(
 )
 
 scenes=(atlas baxter spot cassie iiwa nao pandas)
-gpus=(0 1 2 3 4 5 6 7 8)
+gpus=(0 1 2 3 4 5 6 7)
 args=()
 test_args=()
 cfg_name='wim_512.yaml'

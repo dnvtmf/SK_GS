@@ -22,7 +22,7 @@ __all__ = ['to_tensor', 'tensor_to', 'convert_pth',
            ]
 
 
-def to_tensor(x, dtype=None, device=None, **kwargs) -> torch.Tensor:
+def to_tensor(x, dtype=None, device=None, **kwargs) -> Optional[Tensor]:
     if isinstance(x, torch.Tensor):
         y = x
     elif isinstance(x, np.ndarray):
@@ -30,6 +30,8 @@ def to_tensor(x, dtype=None, device=None, **kwargs) -> torch.Tensor:
     # elif isinstance(x, (list, tuple)):
     #     x = np.ndarray(x)
     #     x = torch.from_numpy(x)
+    elif x is None:
+        return None
     else:
         y = torch.tensor(x, dtype=dtype, device=device)
     if dtype is not None:

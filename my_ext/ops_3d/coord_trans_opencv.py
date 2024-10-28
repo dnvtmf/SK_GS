@@ -128,24 +128,55 @@ def look_at_get(Tv2w: Tensor):
     return eye, at, torch.cross(dir_vec, right_vec, dim=-1)
 
 
-def camera_intrinsics(focal=None, cx_cy=None, size=None, fovy=np.pi, inv=False, **kwargs) -> Tensor:
+def camera_intrinsics(
+    focal: Union[float, None, Tensor, Sequence[float]] = None,
+    cx_cy: Union[float, None, Tensor, Sequence[float]] = None,
+    size: Union[float, None, Tensor, Sequence[float]] = None,
+    fov: Union[float, None, Tensor, Sequence[float]] = np.pi,
+    inv: bool = False,
+    **kwargs
+) -> Tensor:
     """生成相机内参K/Tv2s, 请注意坐标系
     .---> u
     |
     ↓
     v
+    Args:
+        focal: focal length, shape: [..., 1] or shape: [..., 2]
+        cx_cy: principal points, shape: [..., 2]
+        size: image size
+        fov: filed of view, shape: [..., 1] or [..., 2]
+        inv: if True, return Ts2v, else Tv2s
+        kwargs: the kwargs for output matrix
+    Returns:
+         Tensor, shape: [..., 3, 3]
     """
     W, H = size
-    if focal is None:
-        focal = fov_to_focal(fovy, H)
     if cx_cy is None:
         cx, cy = 0.5 * W, 0.5 * H
     elif isinstance(cx_cy, Tensor):
         cx, cy = cx_cy.unbind(-1)
     else:
         cx, cy = cx_cy
-    if isinstance(focal, Tensor) and focal.ndim > 1 and focal.shape[-1] == 2:
-        focal_x, focal_y = focal.unbind(-1)
+    if focal is None:
+        if isinstance(fov, float):
+            focal_x = fov_to_focal(fov, W)
+            focal_y = fov_to_focal(fov, H)
+        elif isinstance(fov, Tensor):
+            if fov.shape[-1] == 2:
+                focal_x = fov_to_focal(fov[..., 0], W)
+                focal_y = fov_to_focal(fov[..., 1], W)
+            else:
+                focal_x = fov_to_focal(fov[..., 0], W)
+                focal_y = fov_to_focal(fov[..., 0], W)
+        else:
+            focal_x = fov_to_focal(fov[0], W)
+            focal_y = fov_to_focal(fov[1], H)
+    elif isinstance(focal, Tensor):
+        if focal.shape[-1] == 2:
+            focal_x, focal_y = focal.unbind(-1)
+        else:
+            focal_x, focal_y = focal.squeeze(-1), focal.squeeze(-1)
     else:
         focal_x, focal_y = focal, focal
     shape = [x.shape for x in [focal_x, focal_y, cx, cy] if isinstance(x, Tensor)]
@@ -203,8 +234,8 @@ def perspective(fovy: Union[float, Tensor] = 0.7854, aspect=1.0, n=0.1, f=1000.0
     Tv2c[..., 0, 2] = (right + left) / (right - left)
     Tv2c[..., 1, 2] = (top + bottom) / (top - bottom)
     Tv2c[..., 3, 2] = z_sign
-    Tv2c[..., 2, 2] = z_sign * f / (f - n)
-    Tv2c[..., 2, 3] = -(f * n) / (f - n)
+    Tv2c[..., 2, 2] = z_sign * (f + n) / (f - n)  # z_sign * f  / (f - n)
+    Tv2c[..., 2, 3] = -(2 * f * n) / (f - n)  # (f * n) / (f - n)
     return Tv2c
 
 
@@ -260,9 +291,18 @@ def perspective2(size, focals=None, FoV=None, pp=None, n=0.1, f=1000.0, device=N
     Tv2c[..., 0, 2] = (2.0 * cx - W) / W
     Tv2c[..., 1, 2] = (2.0 * cy - H) / H
     Tv2c[..., 2, 2] = z_sign * (f + n) / (f - n)
-    Tv2c[..., 2, 3] = -(f * n) / (f - n)
+    Tv2c[..., 2, 3] = -(2 * f * n) / (f - n)
     Tv2c[..., 3, 2] = z_sign
     return Tv2c
+
+
+def ndc2pixel(ndc: Tensor, size: Tuple[int, int]):
+    if ndc.shape[-1] == 4:
+        ndc = ndc[..., :3] / ndc[..., 3:]
+    pixel = torch.zeros_like(ndc[..., :2])
+    pixel[..., 0] = (1 + ndc[..., 0]) * 0.5 * size[0]  # - 0.5
+    pixel[..., 1] = (1 + ndc[..., 1]) * 0.5 * size[1]  # - 0.5
+    return pixel
 
 
 def point2pixel(

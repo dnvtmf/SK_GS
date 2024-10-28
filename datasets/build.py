@@ -2,7 +2,6 @@ import logging
 from pathlib import Path
 
 import my_ext as ext
-from datasets.concat_dataset import ConcatDataset
 from my_ext import utils
 from my_ext.config import get_parser
 from my_ext.utils import eval_str, to_list, extend_list, add_path_option
@@ -125,7 +124,5 @@ def make(cfg, mode='train', **kwargs):
     else:
         raise ValueError('Error to obtain datasets')
 
-    if len(datasets) > 1:
-        return ConcatDataset(datasets)
-    else:
-        return datasets[0]
+    assert len(datasets) == 1
+    return datasets[0]

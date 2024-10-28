@@ -1,5 +1,3 @@
-__base__: ../d_nerf.yaml
-exp_name: num_sp
-log_suffix: 896
+__base__: _base.yaml
 arch_cfg:
     num_superpoints: 896
