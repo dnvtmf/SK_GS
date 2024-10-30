@@ -1,5 +1,7 @@
 exp_name: WIM
 __base__: default.yaml
+arch_cfg:
+    init_sp_from: sampled
 ## dataset
 scene: atlas
 dataset: WIM

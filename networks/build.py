@@ -1,5 +1,3 @@
-from torch import nn
-
 from my_ext.config import get_parser
 from my_ext.utils import add_cfg_option, add_registry_option
 from networks.gaussian_splatting import NETWORKS, GaussianSplatting

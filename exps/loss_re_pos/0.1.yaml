@@ -1,4 +1,5 @@
 __base__: '_base.yaml'
 arch_cfg:
     loss_cfg:
-        sparse: 0.03
+        joint: 0.1
+        joint_all: 0.1

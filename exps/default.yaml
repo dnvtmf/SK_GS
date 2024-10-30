@@ -31,7 +31,8 @@ arch_cfg:
     is_blender: true
     init_sampling_step: 7500
     node_max_num_ratio_during_init: 16
-    LBS_method: W # 'W', 'dist', 'kernel', 'weighted_kernel'
+    init_sp_from: sampled
+    LBS_method: W    # 'W', 'dist', 'kernel', 'weighted_kernel'
     warp_method: LBS # LBS_c, LBS, largest
     sep_rot: false
     # get skeleton
@@ -72,8 +73,8 @@ arch_cfg:
         prune_max_screen_size: 20
         prune_percent_dense: 0.1
 
-        sp_adjust_interval: [200, 10_000, 20_000]
-        sp_merge_interval: [200, 20_000, 30_000]
+        sp_adjust_interval: [100, 10_000, 20_000]
+        sp_merge_interval: [100, 20_000, 30_000]
         init_opacity_reset_interval: [3000, 0, -1]
         init_densify_prune_interval: [100, 0, -1]
     loss_cfg:
@@ -81,7 +82,7 @@ arch_cfg:
         ## both
         image: {method: l1, lambda: 0.8}
         ssim: 0.2
-        sparse: 0.3
+        sparse: 0.1
         smooth: 0.1
         ## dynamic stage
         arap:

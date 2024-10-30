@@ -1,0 +1,3 @@
+__base__: '../d_nerf.yaml'
+exp_name: loss_joint
+seed: 42

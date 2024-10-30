@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -e
+#set -e
 ROOT=$(
   cd $(dirname $0)/..
   pwd
@@ -11,13 +11,15 @@ args=()
 num_scenes=${#scenes[@]}
 num_gpus=${#gpus[@]}
 echo "There are ${num_gpus} gpus and ${num_scenes} scenes"
-ablation_case=num_sp
+#ablation_case=num_sp
 #ablation_case=warp
 #ablation_case=sp_control
 #ablation_case=num_knn
 #ablation_case=lr_deform
 #ablation_case=sk_knn_num
 #ablation_case=loss_sparse
+#ablation_case=loss_re_pos
+ablation_case=loss_sp_arap
 #ablation_case=loss_smooth
 #ablation_case=loss_joint
 #ablation_case=loss_cmp_p
@@ -39,8 +41,8 @@ screen -ls%
 echo "The configuares in ${ablation_case}:"
 ls exps/${ablation_case}
 
-#find ${ROOT}/results -name '*init*.pth' | xargs rm
-#find ${ROOT}/results -name '*checkpoint*.pth' | xargs rm
+find ${ROOT}/results -name '*init*.pth' | xargs rm
+find ${ROOT}/results -name '*checkpoint*.pth' | xargs rm
 #find ${ROOT}/results -name 'best.pth' | xargs rm
 #find ${ROOT}/results -name 'last.pth' | xargs rm
 df -h ${ROOT}
@@ -57,11 +59,13 @@ for ((i = 0; i < num_scenes; ++i)); do
     if [[ ! -e results/${ablation_case}/${scenes[i]}/${name}/last.pth ]]; then
       echo "use gpu${gpu_id} on scene: ${scenes[i]} for exp: ${ablation_case}/${exp} "
       screen -S gpu${gpu_id} -p 0 -X stuff \
-        "python3 train.py -c exps/${ablation_case}/${exp} --log-suffix ${name} --scene=${scenes[i]} ${args[*]} ^M"
+        "python3 train.py -c exps/${ablation_case}/${exp} \
+            --log-suffix ${name} --exp-name ${ablation_case} \
+            --scene=${scenes[i]} ${args[*]} ^M"
     fi
     if [[ ! -e results/${ablation_case}/${scenes[i]}/${name}/results.json ]]; then
       screen -S gpu${gpu_id} -p 0 -X stuff \
-        "python3 test.py -c exps/${ablation_case}/${exp}  --log-suffix ${name} \
+        "python3 test.py -c exps/${ablation_case}/${exp} --log-suffix ${name} --exp-name ${ablation_case} \
           --load results/${ablation_case}/${scenes[i]}/${name}/last.pth \
           --scene ${scenes[i]} --load-no-strict ${test_args[*]} ^M"
     fi

@@ -11,7 +11,7 @@ from torch import nn, Tensor
 from pytorch3d.ops import knn_points
 from lietorch import SE3, SO3
 
-import my_ext
+import my_ext as ext
 from my_ext.ops.point_sample import FurthestSampling
 from my_ext import utils, ops_3d, SH2RGB
 from my_ext.blocks import MLP_with_skips
@@ -104,7 +104,7 @@ def find_root(father: Tensor):
 
 
 @torch.no_grad()
-@my_ext.try_use_C_extension
+@ext.try_use_C_extension
 def joint_discovery(joint_cost: Tensor):
     M = joint_cost.shape[0]
     connectivity = torch.eye(M, device=joint_cost.device, dtype=torch.long)  # (n_parts, n_parts)
@@ -901,7 +901,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         joint_rot = sp_R.inv()[:, None] * sp_R[:, :, None]  # [T, M, M], R_b^-1 R_a
         sp_delta_tr = self.sp_cache[..., :7]
         optimizer = torch.optim.Adam([self.joint_pos], lr=1.0e-3)
-        loss_meter = my_ext.DictMeter(float2str=utils.float2str)
+        loss_meter = ext.DictMeter(float2str=utils.float2str)
 
         with torch.enable_grad():
             for i in range(self.joint_init_steps):
@@ -939,7 +939,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
         state = self.training
         self.train()
         points_c = self.points.detach()
-        loss_meter = my_ext.DictMeter(float2str=my_ext.utils.str_utils.float2str)
+        loss_meter = ext.DictMeter(float2str=ext.utils.str_utils.float2str)
         for step in range(self.joint_init_steps):
             tid = random.randrange(self.num_frames)
             t = self.train_db_times[tid]
@@ -1540,8 +1540,9 @@ class SkeletonGaussianSplatting(GaussianSplatting):
             else:
                 index = torch.randperm(self.points.shape[0], device=self.device)[:self.num_superpoints]
                 points, hyper = self.points[index], self.hyper_feature[index]
-            losses['elastic'] = self.loss_funcs('elastic', self.loss_elastic, t, self.time_interval, points=points,
-                                                hyper=hyper)
+            losses['elastic'] = self.loss_funcs(
+                'elastic', self.loss_elastic, t, self.time_interval, points=points, hyper=hyper
+            )
             losses['acc'] = self.loss_funcs('acc', self.loss_acc, t, 3.0 * self.time_interval, points=points)
             losses['arap'] = self.loss_funcs('arap', self.loss_arap, points=points)
             losses['arap_p'] = self.loss_funcs('p_arap_ct_init', self.loss_points_arap, outputs['points'][0])
@@ -1568,7 +1569,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
                 arap_t, arap_ct = self.loss_sp_arap(SE3.InitFromVec(outputs['_spT'][0]))
                 losses['arap_t'] = self.loss_funcs('sp_arap_t', arap_t)
                 losses['arap_ct'] = self.loss_funcs('sp_arap_ct', arap_ct)
-        if stage == 'sp' or stage == 'sk':
+        if stage == 'sp':  # or stage == 'sk':
             losses['sparse'] = self.loss_funcs('sparse', self.loss_weight_sparsity, outputs['_knn_w'])
             losses['smooth'] = self.loss_funcs('smooth', self.loss_weight_smooth, outputs['_knn_w'][0])
         if stage == 'sp' and self._step > self.guided_step_start >= 0:
@@ -1893,7 +1894,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
             self.init_sp_temp = []
             new_params = {v: getattr(self, k) for k, v in self.param_names_map.items()}
             if self.sp_W is not None:
-                _, p2sp = my_ext.cdist_top(self.points, self.joints)
+                _, p2sp = ext.cdist_top(self.points, self.joints)
                 scale = math.log(9 * (self.num_knn - 1))
                 new_params['sp_W'] = F.one_hot(p2sp, self.num_superpoints).float() * scale  # [0.9, 0.1/(K-1), ...]
             new_params = self.change_optimizer(self._task.optimizer, new_params, op='replace')
@@ -1910,7 +1911,7 @@ class SkeletonGaussianSplatting(GaussianSplatting):
             M = self.joints.shape[0]
             scene_range = self.points.max() - self.points.min()
             if self.sp_W is not None:
-                _, p2sp = my_ext.cdist_top(self.points, self.joints)
+                _, p2sp = ext.cdist_top(self.points, self.joints)
                 scale = math.log(9 * (self.num_knn - 1))
                 new_params['sp_W'] = F.one_hot(p2sp, M).float() * scale  # [0.9, 0.1/(K-1), ...]
             if self._sp_radius is not None:
@@ -2033,21 +2034,3 @@ class SkeletonGaussianSplatting(GaussianSplatting):
             self.background_type == 'white' and step == self.adaptive_control_cfg['densify_interval'][1]):
             self.reset_opacity(optimizer)
             logging.info(f'reset opacity at step {step}')
-
-
-def test_skeleton_warp():
-    from my_ext.utils.test_utils import get_run_speed
-    print()
-    M = 512
-    joint_cost = torch.randn(M, M).cuda()
-    parents, depth, root = joint_discovery(joint_cost)
-    # print(parents[:, 0], root)
-    sk_T = SE3.exp(torch.randn(M, 3).cuda()).matrix()
-    sp_T = SE3.exp(torch.zeros(M, 3).cuda()).matrix()
-
-    T1 = skeleton_warp_v0(sk_T, sp_T, parents, root)
-    T2 = skeleton_warp(sk_T, sp_T, parents, root)
-    error = ((T1 - T2).abs().view(M, -1).max())
-    assert error < 1e-5
-
-    get_run_speed((sk_T, sp_T, parents, root), None, skeleton_warp_v0, skeleton_warp)
