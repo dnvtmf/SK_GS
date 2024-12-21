@@ -1,5 +1,0 @@
-__base__: '_base.yaml'
-arch_cfg:
-    LBS_method: W
-    warp_method: largest
-    sep_rot: false

@@ -1,6 +1,6 @@
 # Template-free Articulated Gaussian Splatting for Real-time Reposable Dynamic View Synthesis
 
-[🌐Project Page](https://dnvtmf.github.io/SK_GS) | [🖨️ArXiv](https://arxiv.org/pdf/2610.02133) | [📰Paper](https://arxiv.org/pdf/2610.02133)
+[🌐Project Page](https://dnvtmf.github.io/SK_GS) | [🖨️ArXiv](https://arxiv.org/pdf/2412.05570) | [📰Paper](https://openreview.net/pdf?id=vcGEV6m5m2)
 
 ## Install
 

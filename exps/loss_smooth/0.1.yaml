@@ -1,4 +1,0 @@
-__base__: '_base.yaml'
-arch_cfg:
-    loss_cfg:
-        smooth: 0.1

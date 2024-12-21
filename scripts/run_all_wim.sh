@@ -32,10 +32,10 @@ for ((i = 0; i < num_scenes; ++i)); do
   gpu_id=${gpus[$((i % num_gpus))]}
   echo "use gpu${gpu_id} on scene: ${scenes[i]} "
   screen -S gpu${gpu_id} -p 0 -X stuff "^M"
-  if [[ ! -e results/${out_dir}/${scenes[i]}/last.pth ]]; then
-    screen -S gpu${gpu_id} -p 0 -X stuff \
-      "python3 train.py -c exps/${cfg_name}  --scene=${scenes[i]} ${args[*]} ^M"
-  fi
+  #  if [[ ! -e results/${out_dir}/${scenes[i]}/last.pth ]]; then
+  screen -S gpu${gpu_id} -p 0 -X stuff \
+    "python3 train.py -c exps/${cfg_name}  --scene=${scenes[i]} ${args[*]} ^M"
+  #  fi
   screen -S gpu${gpu_id} -p 0 -X stuff \
     "python3 test.py -c exps/${cfg_name} \
           --load results/${out_dir}/${scenes[i]}/best.pth \

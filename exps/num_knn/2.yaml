@@ -1,4 +1,0 @@
-__base__: '_base.yaml'
-log_suffix: '2'
-arch_cfg:
-    num_knn: 2

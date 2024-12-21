@@ -26,7 +26,7 @@ arch_cfg:
     hyper_dim: 8
     sp_prune_threshold: 0.001
     sp_split_threshold: 0.0002
-    sp_merge_threshold: 0.005
+    sp_merge_threshold: 0.0005
     max_d_scale: -1.0
     is_blender: true
     init_sampling_step: 7500

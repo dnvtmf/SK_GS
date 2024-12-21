@@ -5,7 +5,7 @@ num_init_points: 2_000
 scene: jumpingjacks
 dataset: DNeRF
 dataset_cfg:
-    background: "black"
+    background: "white"
     batch_mode: true
     coord_src: opengl
     coord_dst: colmap

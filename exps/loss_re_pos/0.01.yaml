@@ -1,5 +1,0 @@
-__base__: '_base.yaml'
-arch_cfg:
-    loss_cfg:
-        joint: 0.01
-        joint_all: 0.01

@@ -1,3 +1,0 @@
-__base__: '../d_nerf.yaml'
-exp_name: num_knn
-seed: 42

@@ -1,3 +1,0 @@
-__base__: '../wim_512.yaml'
-exp_name: warp
-seed: 42

@@ -1,3 +1,0 @@
-__base__: _base.yaml
-arch_cfg:
-    num_superpoints: 512

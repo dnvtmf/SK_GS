@@ -1,5 +1,0 @@
-__base__: '_base.yaml'
-arch_cfg:
-    loss_cfg:
-        sp_arap_t: 0.01
-        sp_arap_ct: 0.01

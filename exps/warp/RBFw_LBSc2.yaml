@@ -1,5 +1,0 @@
-__base__: '_base.yaml'
-arch_cfg:
-    LBS_method: weighted_kernel
-    warp_method: LBS_c
-    sep_rot: false

@@ -1,4 +1,0 @@
-__base__: '_base.yaml'
-log_suffix: '5'
-arch_cfg:
-    sk_knn_num: 5

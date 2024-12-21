@@ -3,7 +3,7 @@ temp.py
 temp.tex
 temp.sh
 build/
-results/
+/results
 temp/
 data/
 

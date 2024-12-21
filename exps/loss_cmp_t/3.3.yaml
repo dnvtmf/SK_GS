@@ -1,7 +1,0 @@
-__base__: '_base.yaml'
-log_suffix: '3.3'
-arch_cfg:
-    loss_cfg:
-        cmp_t: 3.3
-        cmp_r: 3.3
-        cmp_s: 3.3

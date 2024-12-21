@@ -8,7 +8,7 @@ dataset: WIM
 dataset_cfg:
     batch_mode: true
     with_rays: false
-    background: 'black' # white
+    background: 'white' # white
     coord_src: 'opengl'
     coord_dst: 'colmap'
     use_time: True

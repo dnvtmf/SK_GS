@@ -1,6 +1,0 @@
-__base__: '_base.yaml'
-log_suffix: '0.0'
-arch_cfg:
-    loss_cfg:
-        joint: 0.0
-        joint_all: 0.0

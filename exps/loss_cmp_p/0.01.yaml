@@ -1,5 +1,0 @@
-__base__: '_base.yaml'
-log_suffix: '0.01'
-arch_cfg:
-    loss_cfg:
-        cmp_p: 0.01

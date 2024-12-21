@@ -24,6 +24,7 @@ ablation_case=loss_sp_arap
 #ablation_case=loss_joint
 #ablation_case=loss_cmp_p
 #ablation_case=loss_cmp_t
+#ablation_case=sp_merge_threshold
 
 for ((i = 0; i < ${num_gpus}; ++i)); do
   gpu_id="gpu${gpus[$i]}"
