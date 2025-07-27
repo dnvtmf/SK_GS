@@ -10,7 +10,7 @@ conda env create -n enviroment.yaml
 conda activate SK_GS
 # build extension
 cd <project root>
-cd extenstion/_C
+cd my_ext/_C
 mkdir build
 cd build
 cmake ..
